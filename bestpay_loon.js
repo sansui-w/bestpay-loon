@@ -1694,7 +1694,8 @@ async function runAccount(MGS, phone, session, taskKeys, opts) {
       const siRes = siRaw && (siRaw.t || siRaw.result || siRaw); // data \u5e73\u94fa\u65f6\u76f4\u63a5\u7528 data \u672c\u4f53
       const ok = !!(siRes && (siRes.ok === true || siRes.status === 'SUCCESS' || siRes.success === true || siRes.rewardDesc || siRes.balance));
       signInStatus = ok ? '\u6210\u529f' : ((siRes && (siRes.primaryErrMsg || siRes.errMsg)) || '\u8fd4\u56de\u5f02\u5e38');
-      log(`  \u7b7e\u5230\u7ed3\u679c: ${ok ? 'SUCCESS' : JSON.stringify(siRes || si.raw).slice(0, 160)}`);
+      const __em = siRes && (siRes.errMsg || siRes.primaryErrMsg || siRes.errDetail || siRes.errDesc);
+      log(`  \u7b7e\u5230\u7ed3\u679c: ${ok ? 'SUCCESS' : ((__em ? __em + ' | ' : '') + JSON.stringify(siRes || si.raw).slice(0, 400))}`);
     } else {
       signInStatus = '\u8df3\u8fc7:' + si.error;
     }
