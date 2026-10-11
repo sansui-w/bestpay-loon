@@ -1,32 +1,63 @@
-/* ============================================================================
- *  翼支付 · 刷金币  —— Loon 移植版
- *  ---------------------------------------------------------------------------
- *  原脚本 bestpay_task_scheduler.cjs 的正文【逐字保留】，未改一行业务逻辑。
- *  本文件只做一件事：为原脚本提供它原本依赖的 Node 运行环境。
+/* =======================================================================
+ *  bestpay  /  Loon  --  LOCAL CONFIG BLOCK        <<<  EDIT HERE  >>>
+ * -----------------------------------------------------------------------
+ *  Loon has no command-line arguments ("--xxx" does not work), so the
+ *  whole run config is driven by this block + $persistentStore keys.
+ *  Change a value here, save, then just run the task again. That's it.
  *
- *  被垫掉的 Node 能力：
+ *  assets : asset base URL (3 wasm/js files are pulled from here)
+ *  phones : mobile number(s), 11 digits.  e.g. ["13800138000"]
+ *  mode   : "all"      run every saved account     <-- normal daily use
+ *           "phone"    run only phones[0]
+ *           "send-sms" login step 1: send SMS code
+ *           "login"    login step 2: phones[0] + code
+ *  code   : the SMS code you received  (only used while mode = "login")
+ *  tasks  : which missions to run
+ *  max    : max reports per task per run   (3 = default)
+ *  dryRun : true = query only, never report   (safe first test)
+ *  bark   : optional Bark key/URL for push notifications
+ * ======================================================================= */
+var BP_SETUP = {
+  assets: "https://ghproxy.net/https://raw.githubusercontent.com/sansui-w/bestpay-loon/main/assets",
+  phones: [],
+  mode: "all",
+  code: "",
+  tasks: ["ad_show", "ad_click", "drama"],
+  max: 3,
+  dryRun: false,
+  bark: ""
+};
+/* ======================================================================= */
+
+/* ============================================================================
+ *  \u7ffc\u652f\u4ed8 \u00b7 \u5237\u91d1\u5e01  \u2014\u2014 Loon \u79fb\u690d\u7248
+ *  ---------------------------------------------------------------------------
+ *  \u539f\u811a\u672c bestpay_task_scheduler.cjs \u7684\u6b63\u6587\u3010\u9010\u5b57\u4fdd\u7559\u3011\uff0c\u672a\u6539\u4e00\u884c\u4e1a\u52a1\u903b\u8f91\u3002
+ *  \u672c\u6587\u4ef6\u53ea\u505a\u4e00\u4ef6\u4e8b\uff1a\u4e3a\u539f\u811a\u672c\u63d0\u4f9b\u5b83\u539f\u672c\u4f9d\u8d56\u7684 Node \u8fd0\u884c\u73af\u5883\u3002
+ *
+ *  \u88ab\u57ab\u6389\u7684 Node \u80fd\u529b\uff1a
  *    require('fs'|'path'|'os'|'https'|'zlib'|'readline'|'child_process')
  *    Buffer / process / __dirname / global / setTimeout.unref() / URL
  *
- *  被替换的平台能力：
- *    三个 wasm 资产  →  运行时从 URL 拉取（§0），自带 inflate 兜底解压
- *    ~/.bestpay_*.json  →  Loon $persistentStore（比明文文件安全）
- *    网络            →  原生 fetch（$httpClient 二进制不保真，已实测排除）
- *    Bark 推送       →  原脚本自带，走同一个 https 垫片，无需改动
- *    命令行参数      →  Loon [Task] 的 argument= 映射成 process.argv
+ *  \u88ab\u66ff\u6362\u7684\u5e73\u53f0\u80fd\u529b\uff1a
+ *    \u4e09\u4e2a wasm \u8d44\u4ea7  \u2192  \u8fd0\u884c\u65f6\u4ece URL \u62c9\u53d6\uff08\u00a70\uff09\uff0c\u81ea\u5e26 inflate \u515c\u5e95\u89e3\u538b
+ *    ~/.bestpay_*.json  \u2192  Loon $persistentStore\uff08\u6bd4\u660e\u6587\u6587\u4ef6\u5b89\u5168\uff09
+ *    \u7f51\u7edc            \u2192  \u539f\u751f fetch\uff08$httpClient \u4e8c\u8fdb\u5236\u4e0d\u4fdd\u771f\uff0c\u5df2\u5b9e\u6d4b\u6392\u9664\uff09
+ *    Bark \u63a8\u9001       \u2192  \u539f\u811a\u672c\u81ea\u5e26\uff0c\u8d70\u540c\u4e00\u4e2a https \u57ab\u7247\uff0c\u65e0\u9700\u6539\u52a8
+ *    \u547d\u4ee4\u884c\u53c2\u6570      \u2192  Loon [Task] \u7684 argument= \u6620\u5c04\u6210 process.argv
  *
- *  [Task] 配置示例：
+ *  [Task] \u914d\u7f6e\u793a\u4f8b\uff1a
  *    cron "10 10 * * *" script-path=bestpay_loon.js, tag=bestpay-am, argument="--all"
  *    cron "10 20 * * *" script-path=bestpay_loon.js, tag=bestpay-pm, argument="--all"
- *    登录：argument="--login --phone 13800138000 --code 123456"
+ *    \u767b\u5f55\uff1aargument="--login --phone 13800138000 --code 123456"
  *
- *  作者：Little Code Sauce
+ *  \u4f5c\u8005\uff1aLittle Code Sauce
  * ========================================================================== */
 
-/* ---------- §0  资产地址（运行时拉取）------------------------------------
- * 三个 wasm/js 资产不内联，运行时按下列地址取回，脚本体积从 828KB 降到 ~50KB。
- * 若返回体是 gzip/zlib 压缩格式，自动解压（见 §1c）；未压缩原文件也能直接用。
- * 建议：把 gzip 后的 .gz 文件传上去，省流量、下载快。
+/* ---------- \u00a70  \u8d44\u4ea7\u5730\u5740\uff08\u8fd0\u884c\u65f6\u62c9\u53d6\uff09------------------------------------
+ * \u4e09\u4e2a wasm/js \u8d44\u4ea7\u4e0d\u5185\u8054\uff0c\u8fd0\u884c\u65f6\u6309\u4e0b\u5217\u5730\u5740\u53d6\u56de\uff0c\u811a\u672c\u4f53\u79ef\u4ece 828KB \u964d\u5230 ~50KB\u3002
+ * \u82e5\u8fd4\u56de\u4f53\u662f gzip/zlib \u538b\u7f29\u683c\u5f0f\uff0c\u81ea\u52a8\u89e3\u538b\uff08\u89c1 \u00a71c\uff09\uff1b\u672a\u538b\u7f29\u539f\u6587\u4ef6\u4e5f\u80fd\u76f4\u63a5\u7528\u3002
+ * \u5efa\u8bae\uff1a\u628a gzip \u540e\u7684 .gz \u6587\u4ef6\u4f20\u4e0a\u53bb\uff0c\u7701\u6d41\u91cf\u3001\u4e0b\u8f7d\u5feb\u3002
  * ------------------------------------------------------------------------- */
 var __ASSET_URLS = {
   gwcli: '%%URL_GWCLI%%',
@@ -34,15 +65,15 @@ var __ASSET_URLS = {
   mpaas: '%%URL_MPAAS%%',
 };
 
-/* ---------- §2  字节 / 编码工具 ------------------------------------------ */
+/* ---------- \u00a72  \u5b57\u8282 / \u7f16\u7801\u5de5\u5177 ------------------------------------------ */
 var __G = (typeof globalThis !== 'undefined') ? globalThis
          : (typeof global !== 'undefined') ? global
          : this;
 var global = __G;
 
-/* ---------- §1c 极简 DEFLATE 解压（gzip / zlib / raw）----------
- * 用途：资产从 CDN 拉回时可能被服务端压缩，而 Loon 的 fetch 未必自动解压。
- * 只在检测到压缩魔数时启用，正常情况下不参与。已对三个资产全量校验。 */
+/* ---------- \u00a71c \u6781\u7b80 DEFLATE \u89e3\u538b\uff08gzip / zlib / raw\uff09----------
+ * \u7528\u9014\uff1a\u8d44\u4ea7\u4ece CDN \u62c9\u56de\u65f6\u53ef\u80fd\u88ab\u670d\u52a1\u7aef\u538b\u7f29\uff0c\u800c Loon \u7684 fetch \u672a\u5fc5\u81ea\u52a8\u89e3\u538b\u3002
+ * \u53ea\u5728\u68c0\u6d4b\u5230\u538b\u7f29\u9b54\u6570\u65f6\u542f\u7528\uff0c\u6b63\u5e38\u60c5\u51b5\u4e0b\u4e0d\u53c2\u4e0e\u3002\u5df2\u5bf9\u4e09\u4e2a\u8d44\u4ea7\u5168\u91cf\u6821\u9a8c\u3002 */
 var __INFLATE = (function () {
   var LB = [3,4,5,6,7,8,9,10,11,13,15,17,19,23,27,31,35,43,51,59,67,83,99,115,131,163,195,227,258],
       LE = [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0],
@@ -218,7 +249,7 @@ function __concatU8(list) {
   return out;
 }
 
-/* ---------- §3  Buffer 垫片（Uint8Array 子类语义）------------------------- */
+/* ---------- \u00a73  Buffer \u57ab\u7247\uff08Uint8Array \u5b50\u7c7b\u8bed\u4e49\uff09------------------------- */
 var __BufProto = Object.create(Uint8Array.prototype);
 __BufProto.toString = function (enc) {
   enc = String(enc || 'utf8').toLowerCase();
@@ -251,12 +282,12 @@ var Buffer = {
   concat: function (list) { return __mkBuf(__concatU8(list)); },
 };
 
-/* ---------- §4  抓取原生能力（必须在原脚本改写 global.fetch 之前）--------- */
+/* ---------- \u00a74  \u6293\u53d6\u539f\u751f\u80fd\u529b\uff08\u5fc5\u987b\u5728\u539f\u811a\u672c\u6539\u5199 global.fetch \u4e4b\u524d\uff09--------- */
 var __NATIVE_FETCH = (typeof fetch !== 'undefined') ? fetch : null;
 var __NATIVE_ST = (typeof setTimeout !== 'undefined') ? setTimeout : null;
 var __NATIVE_CT = (typeof clearTimeout !== 'undefined') ? clearTimeout : null;
 
-/* setTimeout 返回值的 .unref() —— 原脚本对看门狗定时器调了它，JSC 返回数字会炸 */
+/* setTimeout \u8fd4\u56de\u503c\u7684 .unref() \u2014\u2014 \u539f\u811a\u672c\u5bf9\u770b\u95e8\u72d7\u5b9a\u65f6\u5668\u8c03\u4e86\u5b83\uff0cJSC \u8fd4\u56de\u6570\u5b57\u4f1a\u70b8 */
 try {
   var __stProbe = __NATIVE_ST(function () {}, 0);
   if (typeof __stProbe === 'number') {
@@ -270,9 +301,9 @@ try {
     }
   }
   __NATIVE_CT(__stProbe);
-} catch (e) { /* 兜底：下面还有一层 */ }
+} catch (e) { /* \u515c\u5e95\uff1a\u4e0b\u9762\u8fd8\u6709\u4e00\u5c42 */ }
 
-/* URL —— Loon 若自带就用自带 */
+/* URL \u2014\u2014 Loon \u82e5\u81ea\u5e26\u5c31\u7528\u81ea\u5e26 */
 if (typeof URL === 'undefined' || !URL) {
   __G.URL = function (href) {
     var m = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^\/:?#]*)(?::(\d+))?([^?#]*)(\?[^#]*)?(#.*)?$/.exec(String(href));
@@ -288,11 +319,11 @@ if (typeof URL === 'undefined' || !URL) {
   };
 }
 
-/* ---------- §5  日志缓冲（运行结束汇总推送）------------------------------ */
+/* ---------- \u00a75  \u65e5\u5fd7\u7f13\u51b2\uff08\u8fd0\u884c\u7ed3\u675f\u6c47\u603b\u63a8\u9001\uff09------------------------------ */
 var __LOG = [];
 var __CONSOLE_LOG = (typeof console !== 'undefined' && console.log) ? console.log : function () {};
 
-/* 防御：Loon 的 console 若缺 info/debug/trace，mpaas 模块内部 (console)['info'].apply 会崩 */
+/* \u9632\u5fa1\uff1aLoon \u7684 console \u82e5\u7f3a info/debug/trace\uff0cmpaas \u6a21\u5757\u5185\u90e8 (console)['info'].apply \u4f1a\u5d29 */
 try {
   if (typeof console !== 'undefined' && console) {
     var __CM = ['log', 'info', 'warn', 'error', 'debug', 'trace', 'dir', 'table',
@@ -321,26 +352,95 @@ if (typeof console !== 'undefined') {
   console.error = function () { __pushLog(Array.prototype.map.call(arguments, __fmtLogArg)); };
 }
 
-/* ---------- §6  Loon 持久化（替代 ~/.bestpay_*.json）--------------------- */
+/* ---------- \u00a76  Loon \u6301\u4e45\u5316\uff08\u66ff\u4ee3 ~/.bestpay_*.json\uff09--------------------- */
 var __STORE = {
   get: function (k) { try { return (typeof $persistentStore !== 'undefined') ? $persistentStore.read(k) : null; } catch (e) { return null; } },
   set: function (k, v) { try { if (typeof $persistentStore !== 'undefined') $persistentStore.write(String(v), k); } catch (e) {} },
   del: function (k) { try { if (typeof $persistentStore !== 'undefined') $persistentStore.write(null, k); } catch (e) {} },
 };
 
-/* ---------- §7  参数：Loon [Task] argument= → process.argv ----------------- */
-var __RAW_ARG = '';
-try { if (typeof $argument !== 'undefined' && $argument != null) __RAW_ARG = String($argument); } catch (e) {}
+/* ---------- \u00a77  \u914d\u7f6e\uff1a\u5168\u90e8\u8bfb $persistentStore \u952e --------------------------
+ * Loon \u4e0d\u8ba4 "--xxx" \u8fd9\u79cd\u547d\u4ee4\u884c\u53c2\u6570, \u6240\u4ee5\u8fd0\u884c\u914d\u7f6e\u6539\u6210:
+ *   \u811a\u672c\u9876\u90e8 BP_SETUP \u914d\u7f6e\u5757   <-- \u4f60\u7684\u7f16\u8f91\u9762(\u975e\u7a7a\u5373\u751f\u6548)
+ *   \u5b58\u50a8\u952e bp_conf            <-- \u8fd0\u884c\u65f6\u5feb\u7167 + \u7f3a\u7701\u8865\u4f4d
+ * \u518d\u628a\u914d\u7f6e**\u53cd\u5411\u62fc\u6210 process.argv**, \u539f\u811a\u672c\u4f53\u4e00\u884c\u90fd\u4e0d\u7528\u6539.
+ * ------------------------------------------------------------------------ */
+var __DEFAULT_CONF = {
+  assets: '',
+  phones: [],
+  mode: 'all',
+  code: '',
+  tasks: ['ad_show', 'ad_click', 'drama'],
+  max: 3,
+  dryRun: false,
+  bark: ''
+};
 
-/* ---------- 资产基址：--assets <base> 优先，其次持久化 bp_assets ----------
- * 这样脚本本身不用改，资产换地址只改 Loon 的 argument 或重设一次即可。 */
+function __has(v) {
+  if (v == null) return false;
+  if (typeof v === 'string') return v.trim().length > 0;
+  if (Array.isArray(v)) return v.length > 0;
+  return true;
+}
+
+function __hash(s) { var h = 5381, i; for (i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0; return h.toString(16); }
+
+/* ---- \u4e00\u6b21\u6027\u53c2\u6570(\u624b\u52a8\u8fd0\u884c\u65f6\u624d\u53ef\u80fd\u6709): \u4f18\u5148\u7ea7\u6700\u9ad8, \u5e76\u5199\u56de\u5b58\u50a8\u952e ---- */
+var __ARG_RAW = '';
+try { if (typeof $argument !== 'undefined' && $argument != null) __ARG_RAW = String($argument); } catch (e) {}
+if (!__ARG_RAW) { try { if (typeof $script !== 'undefined' && $script && $script.argument) __ARG_RAW = String($script.argument); } catch (e) {} }
+
+var __ARGOVR = (function () {
+  if (!__ARG_RAW) return null;
+  var t = __ARG_RAW.split(/\s+/).filter(function (x) { return x.length; }), o = {}, i, v;
+  function val(i) { return (i + 1 < t.length && t[i + 1].charAt(0) !== '-') ? t[i + 1] : ''; }
+  for (i = 0; i < t.length; i++) {
+    v = t[i];
+    if (v === '--all') o.mode = 'all';
+    else if (v === '--login') o.mode = 'login';
+    else if (v === '--send-sms') o.mode = 'send-sms';
+    else if (v === '--dry-run') o.dryRun = true;
+    else if (v === '--phone') { o.phones = [val(i)]; i++; }
+    else if (v === '--code' || v === '--sms-code') { o.code = val(i); i++; }
+    else if (v === '--max') { o.max = parseInt(val(i), 10); i++; }
+    else if (v === '--tasks') { o.tasks = val(i).split(','); i++; }
+    else if (v === '--bark') { o.bark = val(i); i++; }
+    else if (v === '--assets') { o.assets = val(i); i++; }
+  }
+  return o;
+})();
+
+var __CONF = (function () {
+  var saved = {};
+  try { saved = JSON.parse(__STORE.get('bp_conf') || '{}') || {}; } catch (e) { saved = {}; }
+  var local = (typeof BP_SETUP !== 'undefined' && BP_SETUP && typeof BP_SETUP === 'object') ? BP_SETUP : {};
+  var hash = __hash(JSON.stringify(local));
+  var prev = '';
+  try { prev = String(__STORE.get('bp_conf_hash') || ''); } catch (e) {}
+  /* \u914d\u7f6e\u5757\u5185\u5bb9\u53d8\u4e86 -> \u4ee5\u5757\u4e3a\u51c6; \u6ca1\u53d8 -> \u4ee5\u5b58\u50a8\u952e\u4e3a\u51c6(\u811a\u672c\u81ea\u5df1\u6539\u7684\u72b6\u6001\u624d\u7559\u5f97\u4f4f) */
+  var byBlock = (hash !== prev) || __ARGOVR;
+  var c = {}, k, src;
+  for (k in __DEFAULT_CONF) {
+    if (__ARGOVR && __has(__ARGOVR[k])) src = __ARGOVR[k];
+    else if (byBlock) src = __has(local[k]) ? local[k] : (__has(saved[k]) ? saved[k] : __DEFAULT_CONF[k]);
+    else src = __has(saved[k]) ? saved[k] : (__has(local[k]) ? local[k] : __DEFAULT_CONF[k]);
+    c[k] = src;
+  }
+  c.dryRun = (__ARGOVR && __ARGOVR.dryRun === true) || (byBlock ? local.dryRun === true
+    : (saved.dryRun === true || (saved.dryRun == null && local.dryRun === true)));
+  c.max = parseInt(c.max, 10) || 3;
+  try { __STORE.set('bp_conf', JSON.stringify(c)); } catch (e) {}
+  try { __STORE.set('bp_conf_hash', hash); } catch (e) {}
+  if (typeof __ARGOVR === 'object') { try { __STORE.set('bp_setup_by', 'arg'); } catch (e) {} }
+  return c;
+})();
+
+/* \u8d44\u4ea7\u57fa\u5740: \u914d\u7f6e\u5757/\u5b58\u50a8\u952e -> __ASSET_URLS */
 (function () {
-  var m = String(__RAW_ARG || '').match(/--assets\s+(\S+)/);
-  var base = m ? m[1] : null;
-  if (base) { try { __STORE.set('bp_assets', base); } catch (e) {} }
-  else { try { base = __STORE.get('bp_assets'); } catch (e) {} }
+  var base = String(__CONF.assets || '').replace(/\/+$/, '');
+  if (!base) { try { base = String(__STORE.get('bp_assets') || '').replace(/\/+$/, ''); } catch (e) {} }
   if (base) {
-    base = base.replace(/\/+$/, '');
+    try { __STORE.set('bp_assets', base); } catch (e) {}
     __ASSET_URLS = {
       gwcli: base + '/gwcli1-0-2.wasm.gz',
       wbaes: base + '/WBAES.wasm.gz',
@@ -348,38 +448,45 @@ try { if (typeof $argument !== 'undefined' && $argument != null) __RAW_ARG = Str
     };
   }
 })();
-if (!__RAW_ARG) { try { if (typeof $script !== 'undefined' && $script && $script.argument) __RAW_ARG = String($script.argument); } catch (e) {} }
 
+/* \u914d\u7f6e -> process.argv. \u539f\u811a\u672c\u4f53\u7167\u65e7\u89e3\u6790 argv, \u4e00\u884c\u90fd\u4e0d\u7528\u52a8. */
 var __ARGV = (function () {
-  var toks = __RAW_ARG.split(/\s+/).filter(function (x) { return x.length > 0; });
-  var env = {}, args = [], i, m;
-  for (i = 0; i < toks.length; i++) {
-    m = /^([A-Z_][A-Z0-9_]*)=(.*)$/.exec(toks[i]);
-    if (m) { env[m[1]] = m[2]; } else { args.push(toks[i]); }
-  }
-  var code = '';
-  for (i = 0; i < args.length; i++) {
-    if ((args[i] === '--code' || args[i] === '--sms-code') && args[i + 1]) code = args[i + 1];
-  }
-  var ai = args.indexOf('--assets');
-  if (ai >= 0) args.splice(ai, 2);
-  if (args.length === 0) args.push('--all');   // Loon cron 默认跑全任务
+  var c = __CONF, env = {}, args = [];
+  var mode = String(c.mode || 'all').toLowerCase();
 
-  // ---- Bark 推送地址：从持久化读取，支持 --bark <url> 设置 ----
-  var barkIdx = args.indexOf('--bark');
-  if (barkIdx >= 0 && args[barkIdx + 1]) {
-    try { __STORE.set('bp_bark', args[barkIdx + 1]); } catch (e) {}
-    env.BESTPAY_BARK_KEY = args[barkIdx + 1];
-    args.splice(barkIdx, 2);
+  var phones = (Array.isArray(c.phones) ? c.phones : String(c.phones || '').split(/[,\s]+/))
+    .map(function (p) { return String(p).replace(/\D/g, ''); })
+    .filter(function (p) { return /^1\d{10}$/.test(p); });
+
+  if (mode === 'send-sms') {
+    args.push('--send-sms');
+    if (phones[0]) { args.push('--phone', phones[0]); env.BESTPAY_PHONE = phones[0]; }
+  } else if (mode === 'login') {
+    args.push('--login');
+    if (phones[0]) { args.push('--phone', phones[0]); env.BESTPAY_PHONE = phones[0]; }
+    if (__has(c.code)) { var cd = String(c.code).trim(); args.push('--code', cd); env.BESTPAY_SMS_CODE = cd; }
+  } else if (mode === 'phone') {
+    if (phones[0]) { args.push('--phone', phones[0]); env.BESTPAY_PHONE = phones[0]; }
   } else {
-    var savedBark = null;
-    try { savedBark = __STORE.get('bp_bark'); } catch (e) {}
-    if (savedBark) env.BESTPAY_BARK_KEY = savedBark;
+    args.push('--all');                       // \u65e5\u5e38: \u6240\u6709\u5df2\u4fdd\u5b58\u8d26\u53f7
   }
-  return { args: args, env: env, code: code };
+
+  var tasks = (Array.isArray(c.tasks) ? c.tasks : String(c.tasks || '').split(','))
+    .map(function (s) { return String(s).trim(); }).filter(Boolean);
+  if (tasks.length && tasks.join(',') !== 'ad_show,ad_click,drama') args.push('--tasks', tasks.join(','));
+
+  var mx = parseInt(c.max, 10);
+  if (mx >= 1 && mx !== 3) args.push('--max', String(mx));
+  if (c.dryRun === true) args.push('--dry-run');
+
+  var bark = String(c.bark || '');
+  if (!bark) { try { bark = String(__STORE.get('bp_bark') || ''); } catch (e) {} }
+  if (bark) env.BESTPAY_BARK_KEY = bark;
+
+  return { args: args.length ? args : ['--all'], env: env };
 })();
 
-/* ---------- §8  资产：预载 + 缓存 ---------------------------------------- */
+/* ---------- \u00a78  \u8d44\u4ea7\uff1a\u9884\u8f7d + \u7f13\u5b58 ---------------------------------------- */
 var __ASSETS = {};
 
 function __preloadAssets() {
@@ -388,18 +495,18 @@ function __preloadAssets() {
   keys.forEach(function (k) {
     var url = __ASSET_URLS[k];
     if (!url || url.indexOf('%%') === 0) {
-      throw new Error('资产地址未配置: ' + k);
+      throw new Error('\u8d44\u4ea7\u5730\u5740\u672a\u914d\u7f6e: ' + k);
     }
     pending.push(
       __NATIVE_FETCH(url, { cache: 'no-store' }).then(function (r) {
-        if (!r || !r.ok) throw new Error('资产拉取失败 ' + k + ' HTTP ' + (r && r.status));
+        if (!r || !r.ok) throw new Error('\u8d44\u4ea7\u62c9\u53d6\u5931\u8d25 ' + k + ' HTTP ' + (r && r.status));
         return r.arrayBuffer();
       }).then(function (ab) {
         var u8 = new Uint8Array(ab);
         var size0 = u8.length;
         u8 = __INFLATE.maybe(u8);
         __ASSETS[k] = (k === 'mpaas') ? __utf8Decode(u8) : u8;
-        __pushLog(['  资产 ' + k + ': ' + size0 + ' -> ' + u8.length + ' 字节']);
+        __pushLog(['  \u8d44\u4ea7 ' + k + ': ' + size0 + ' -> ' + u8.length + ' \u5b57\u8282']);
       })
     );
   });
@@ -408,10 +515,10 @@ function __preloadAssets() {
 
 function __asset(name) {
   if (__ASSETS[name]) return __ASSETS[name];
-  throw new Error('资产未预载: ' + name);
+  throw new Error('\u8d44\u4ea7\u672a\u9884\u8f7d: ' + name);
 }
 
-/* ---------- §9  fs / path / os 垫片 ------------------------------------- */
+/* ---------- \u00a79  fs / path / os \u57ab\u7247 ------------------------------------- */
 function __classifyPath(p) {
   p = String(p);
   if (/gwcli/i.test(p)) return 'gwcli';
@@ -451,7 +558,7 @@ var __FS = {
       __STORE.set('bp_' + k, (typeof data === 'string') ? data : __utf8Decode(data));
       return;
     }
-    /* 日志文件等：直接丢进 Loon 日志 */
+    /* \u65e5\u5fd7\u6587\u4ef6\u7b49\uff1a\u76f4\u63a5\u4e22\u8fdb Loon \u65e5\u5fd7 */
     try { __CONSOLE_LOG('[writeFileSync] ' + p + ' (' + (data && data.length || 0) + ' bytes)'); } catch (e) {}
   },
   appendFileSync: function (p, data) {
@@ -503,18 +610,18 @@ var __OS = {
   EOL: '\n',
 };
 
-/* ---------- §10 zlib 垫片（自带 inflate 实现）--------------------------- */
+/* ---------- \u00a710 zlib \u57ab\u7247\uff08\u81ea\u5e26 inflate \u5b9e\u73b0\uff09--------------------------- */
 var __ZLIB = {
   gunzipSync: function (b) { return __mkBuf(__INFLATE.maybe(b instanceof Uint8Array ? b : new Uint8Array(b))); },
   inflateSync: function (b) { return __mkBuf(__INFLATE.maybe(b instanceof Uint8Array ? b : new Uint8Array(b))); },
   inflateRawSync: function (b) { return __mkBuf(__INFLATE.inflate(b instanceof Uint8Array ? b : new Uint8Array(b), 0)); },
-  deflateSync: function () { throw new Error('zlib.deflateSync 未实现（本脚本未使用）'); },
-  gzipSync: function () { throw new Error('zlib.gzipSync 未实现（本脚本未使用）'); },
+  deflateSync: function () { throw new Error('zlib.deflateSync \u672a\u5b9e\u73b0\uff08\u672c\u811a\u672c\u672a\u4f7f\u7528\uff09'); },
+  gzipSync: function () { throw new Error('zlib.gzipSync \u672a\u5b9e\u73b0\uff08\u672c\u811a\u672c\u672a\u4f7f\u7528\uff09'); },
 };
 
-/* ---------- §11 https 垫片（基于原生 fetch，二进制保真）------------------ */
-/* 实测结论：$httpClient 字符串 body 会被 UTF-8 撑爆，ArrayBuffer 会被字符串化，
- *           只有原生 fetch 的 Uint8Array body 字节级保真 —— 故走 fetch。      */
+/* ---------- \u00a711 https \u57ab\u7247\uff08\u57fa\u4e8e\u539f\u751f fetch\uff0c\u4e8c\u8fdb\u5236\u4fdd\u771f\uff09------------------ */
+/* \u5b9e\u6d4b\u7ed3\u8bba\uff1a$httpClient \u5b57\u7b26\u4e32 body \u4f1a\u88ab UTF-8 \u6491\u7206\uff0cArrayBuffer \u4f1a\u88ab\u5b57\u7b26\u4e32\u5316\uff0c
+ *           \u53ea\u6709\u539f\u751f fetch \u7684 Uint8Array body \u5b57\u8282\u7ea7\u4fdd\u771f \u2014\u2014 \u6545\u8d70 fetch\u3002      */
 var __HTTPS = (function () {
   function request(opts, cb) {
     var chunks = [], errCb = null, toMs = 0, toFn = null, destroyed = false, timer = null;
@@ -529,7 +636,7 @@ var __HTTPS = (function () {
 
     function send() {
       if (!__NATIVE_FETCH) {
-        if (errCb) errCb(new Error('Loon 环境缺少原生 fetch，无法联网'));
+        if (errCb) errCb(new Error('Loon \u73af\u5883\u7f3a\u5c11\u539f\u751f fetch\uff0c\u65e0\u6cd5\u8054\u7f51'));
         return;
       }
       var host = opts.hostname || opts.host || '';
@@ -576,15 +683,15 @@ var __HTTPS = (function () {
   };
 })();
 
-/* ---------- §12 readline / child_process 垫片 ---------------------------- */
+/* ---------- \u00a712 readline / child_process \u57ab\u7247 ---------------------------- */
 var __READLINE = {
   createInterface: function () {
     return {
       question: function (q, cb) {
         if (__ARGV.code) { cb(__ARGV.code); return; }
         throw new Error(
-          'Loon 无法交互输入验证码。请把验证码写进 [Task] 的 argument，例如：\n' +
-          '  argument="--login --phone 你的手机号 --code 123456"'
+          'Loon \u65e0\u6cd5\u4ea4\u4e92\u8f93\u5165\u9a8c\u8bc1\u7801\u3002\u8bf7\u628a\u9a8c\u8bc1\u7801\u5199\u8fdb [Task] \u7684 argument\uff0c\u4f8b\u5982\uff1a\n' +
+          '  argument="--login --phone \u4f60\u7684\u624b\u673a\u53f7 --code 123456"'
         );
       },
       close: function () {}, on: function () { return this; }, pause: function () { return this; }, resume: function () { return this; },
@@ -597,7 +704,7 @@ var __CP = {
   spawnSync: function () { return { status: 0, stdout: '', stderr: '' }; },
 };
 
-/* ---------- §13 process / require ---------------------------------------- */
+/* ---------- \u00a713 process / require ---------------------------------------- */
 var __EXITED = false;
 var __WATCHDOG = null;
 function __finish() {
@@ -606,13 +713,13 @@ function __finish() {
   if (__WATCHDOG) { try { __NATIVE_CT(__WATCHDOG); } catch (e) {} __WATCHDOG = null; }
   var tail = __LOG.slice(-24).join('\n');
   if (tail && __ARGV.args.indexOf('--quiet') < 0) {
-    try { $notification.post('翼支付刷金币', __ARGV.args.join(' ') || '(默认)', tail); } catch (e) {}
+    try { $notification.post('\u7ffc\u652f\u4ed8\u5237\u91d1\u5e01', __ARGV.args.join(' ') || '(\u9ed8\u8ba4)', tail); } catch (e) {}
   }
   try { $done({}); } catch (e) {}
 }
 
 __WATCHDOG = __NATIVE_ST(function () {
-  __pushLog(['[看门狗] 运行超时(180s)，强制收尾']);
+  __pushLog(['[\u770b\u95e8\u72d7] \u8fd0\u884c\u8d85\u65f6(180s)\uff0c\u5f3a\u5236\u6536\u5c3e']);
   __finish();
 }, 180000);
 
@@ -650,25 +757,44 @@ __G.require = require;
 var __dirname = '/loon';
 var __filename = '/loon/bestpay_task_scheduler.cjs';
 
-/* ==== 原脚本正文开始（逐字保留）==== */
+/* \u9996\u6b21\u4f7f\u7528/\u65e0\u8d26\u53f7\u65f6\u8865\u4e00\u53e5\u4eba\u8bdd\u63d0\u793a(\u539f\u811a\u672c\u4f53\u91cc\u7684\u63d0\u793a\u8fd8\u662f\u8001\u547d\u4ee4\u884c\u5199\u6cd5, \u4e0d\u6539\u6b63\u6587) */
+(function () {
+  var __origPush = __pushLog, __hinted = false;
+  __pushLog = function (parts) {
+    try {
+      var s = Array.prototype.join.call(parts, ' ');
+      if (!__hinted && (s.indexOf('\u65e0\u6709\u6548 session') >= 0 || s.indexOf('\u65e0\u6709\u6548sess') >= 0)) {
+        __hinted = true;
+        __origPush(['', '===== \u600e\u4e48\u914d\u7f6e =====',
+          '1) \u7528\u7f16\u8f91\u5668\u6253\u5f00 bestpay_loon.js \u9876\u90e8\u7684 BP_SETUP \u914d\u7f6e\u5757',
+          '2) phones \u586b\u624b\u673a\u53f7, mode \u6539\u6210 "send-sms", \u8dd1\u4e00\u6b21\u6536\u77ed\u4fe1\u9a8c\u8bc1\u7801',
+          '3) mode \u6539\u6210 "login", \u628a\u9a8c\u8bc1\u7801\u586b\u8fdb code, \u518d\u8dd1\u4e00\u6b21\u5b8c\u6210\u767b\u5f55',
+          '4) mode \u6539\u56de "all", \u4e4b\u540e\u6bcf\u5929\u81ea\u52a8\u8dd1']);
+      }
+    } catch (e) {}
+    return __origPush(parts);
+  };
+})();
+
+/* ==== \u539f\u811a\u672c\u6b63\u6587\u5f00\u59cb\uff08\u9010\u5b57\u4fdd\u7559\uff09==== */
 Promise.resolve().then(function () { return __preloadAssets(); }).then(function () {
 /**
- * 翼支付 · 赚金币 定时任务脚本 (Mac launchd)
- * 进程内加载一次 wasm, 内联调接口. 覆盖:
- *   - 签到 signIn
- *   - AD_show 看视频 (+6000/次, 每日10次上限)
- *   - AD_click 点广告 (+10/次, 每日20次上限)
- *   - DRAMA_DURATION 短剧 (+50/次, 每日3次上限)
- * 特性: 分批 + 随机延时(短) + 硬超时防卡死 + 断点续跑
+ * \u7ffc\u652f\u4ed8 \u00b7 \u8d5a\u91d1\u5e01 \u5b9a\u65f6\u4efb\u52a1\u811a\u672c (Mac launchd)
+ * \u8fdb\u7a0b\u5185\u52a0\u8f7d\u4e00\u6b21 wasm, \u5185\u8054\u8c03\u63a5\u53e3. \u8986\u76d6:
+ *   - \u7b7e\u5230 signIn
+ *   - AD_show \u770b\u89c6\u9891 (+6000/\u6b21, \u6bcf\u65e510\u6b21\u4e0a\u9650)
+ *   - AD_click \u70b9\u5e7f\u544a (+10/\u6b21, \u6bcf\u65e520\u6b21\u4e0a\u9650)
+ *   - DRAMA_DURATION \u77ed\u5267 (+50/\u6b21, \u6bcf\u65e53\u6b21\u4e0a\u9650)
+ * \u7279\u6027: \u5206\u6279 + \u968f\u673a\u5ef6\u65f6(\u77ed) + \u786c\u8d85\u65f6\u9632\u5361\u6b7b + \u65ad\u70b9\u7eed\u8dd1
  *
- * 用法：
- *   node bestpay_task_scheduler.cjs --login --phone 13800000000   # 手机号短信登录(存 session)
- *   node bestpay_task_scheduler.cjs --login --phone 13800000000 --code 123456  # 非交互登录(面板两步)
- *   node bestpay_task_scheduler.cjs --send-sms --phone 13800000000            # 只发短信, 拿 smsUid
- *   node bestpay_task_scheduler.cjs --all               # 所有 session 账号
- *   node bestpay_task_scheduler.cjs --phone 13800000000 # 指定账号
- *   node bestpay_task_scheduler.cjs --tasks ad_show,ad_click,drama   # 指定任务
- *   node bestpay_task_scheduler.cjs --dry-run           # 只查不报
+ * \u7528\u6cd5\uff1a
+ *   node bestpay_task_scheduler.cjs --login --phone 13800000000   # \u624b\u673a\u53f7\u77ed\u4fe1\u767b\u5f55(\u5b58 session)
+ *   node bestpay_task_scheduler.cjs --login --phone 13800000000 --code 123456  # \u975e\u4ea4\u4e92\u767b\u5f55(\u9762\u677f\u4e24\u6b65)
+ *   node bestpay_task_scheduler.cjs --send-sms --phone 13800000000            # \u53ea\u53d1\u77ed\u4fe1, \u62ff smsUid
+ *   node bestpay_task_scheduler.cjs --all               # \u6240\u6709 session \u8d26\u53f7
+ *   node bestpay_task_scheduler.cjs --phone 13800000000 # \u6307\u5b9a\u8d26\u53f7
+ *   node bestpay_task_scheduler.cjs --tasks ad_show,ad_click,drama   # \u6307\u5b9a\u4efb\u52a1
+ *   node bestpay_task_scheduler.cjs --dry-run           # \u53ea\u67e5\u4e0d\u62a5
  */
 const fs = require('fs');
 const path = require('path');
@@ -704,16 +830,16 @@ const OP = {
   queryPageConfig: 'com.bestpay.marketingadapter.api.y2025.score.market.ScoreMarketService.queryPageConfig',
   getReward: 'com.bestpay.marketingadapter.api.y2024.mission.MissionService.newGetReward',
   authTokenLogin: 'com.bestpay.mbp.customer.facade.LoginFacade.authTokenLogin',
-  // 手机号短信登录 (LoginEvent 链)
+  // \u624b\u673a\u53f7\u77ed\u4fe1\u767b\u5f55 (LoginEvent \u94fe)
   sendSms: 'com.bestpay.mobile.service.account.prd.event.LoginEvent.sendSmsVerifyCode',
   verifySms: 'com.bestpay.mobile.service.account.prd.event.LoginEvent.authSmsVerifyCode',
 };
 
-// ============ 脱敏配置 ============
-// 默认手机号改为占位符; 运行时用 --phone / BESTPAY_PHONE / 环境覆盖
-const MASK_PHONE = '13800000000';                 // 占位示例号
+// ============ \u8131\u654f\u914d\u7f6e ============
+// \u9ed8\u8ba4\u624b\u673a\u53f7\u6539\u4e3a\u5360\u4f4d\u7b26; \u8fd0\u884c\u65f6\u7528 --phone / BESTPAY_PHONE / \u73af\u5883\u8986\u76d6
+const MASK_PHONE = '13800000000';                 // \u5360\u4f4d\u793a\u4f8b\u53f7
 const PHONE_RE = /^1\d{10}$/;
-// 手机号打码: 138****0000
+// \u624b\u673a\u53f7\u6253\u7801: 138****0000
 function maskPhone(p) {
   const s = String(p || '');
   return PHONE_RE.test(s) ? s.slice(0, 3) + '****' + s.slice(7) : (s ? '***' : '');
@@ -722,18 +848,18 @@ function normalizePhone(p) {
   const s = String(p || '').trim();
   if (PHONE_RE.test(s)) return s;                 // 13800000000
   if (/^\+?86\d{11}$/.test(s)) return s.replace(/^\+?86/, '');  // +8613800000000 / 8613800000000
-  return '';                                      // 空/无效 → 视为无账号
+  return '';                                      // \u7a7a/\u65e0\u6548 \u2192 \u89c6\u4e3a\u65e0\u8d26\u53f7
 }
 function ask(q) {
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolve) => rl.question(q, (ans) => { rl.close(); resolve(String(ans || '').trim()); }));
 }
 
-// ============ 基础封装 (与 bestpay_task_test.cjs 一致) ============
+// ============ \u57fa\u7840\u5c01\u88c5 (\u4e0e bestpay_task_test.cjs \u4e00\u81f4) ============
 function log(...a) { console.log(new Date().toTimeString().slice(0, 8), ...a); }
 
-// Bark 推送 (独立 https 请求, 不依赖被 wasm 重写的 global.fetch)
-// key 后端 CF 前挡, 需浏览器 UA 否则 1010/403
+// Bark \u63a8\u9001 (\u72ec\u7acb https \u8bf7\u6c42, \u4e0d\u4f9d\u8d56\u88ab wasm \u91cd\u5199\u7684 global.fetch)
+// key \u540e\u7aef CF \u524d\u6321, \u9700\u6d4f\u89c8\u5668 UA \u5426\u5219 1010/403
 const BARK_KEY = process.env.BESTPAY_BARK_KEY || 'https://bark.day.app/FILL_ME_BARK_KEY';
 const BARK_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 function sendBark(title, body) {
@@ -751,9 +877,9 @@ function sendBark(title, body) {
           resolve(res.statusCode);
         });
       });
-      req.on('error', (e) => { log(`  [bark] 失败: ${e.message}`); resolve(0); });
+      req.on('error', (e) => { log(`  [bark] \u5931\u8d25: ${e.message}`); resolve(0); });
       req.setTimeout(8000, () => { req.destroy(); resolve(0); });
-    } catch (e) { log(`  [bark] 异常: ${e.message}`); resolve(0); }
+    } catch (e) { log(`  [bark] \u5f02\u5e38: ${e.message}`); resolve(0); }
   });
 }
 
@@ -984,7 +1110,7 @@ function h5Headers(session, appType, env) {
 }
 
 async function authTokenLogin(MGS, session) {
-  if (!session || !session.loginToken) throw new Error('无 loginToken');
+  if (!session || !session.loginToken) throw new Error('\u65e0 loginToken');
   const res = await rpc(MGS, OP.authTokenLogin, Object.assign({
     loginToken: session.loginToken, productNo: session.productNo,
   }, apiParams()), {
@@ -1004,7 +1130,7 @@ async function authTokenLogin(MGS, session) {
     ipRId: (t.ipRId || t.ipRid) || (Array.isArray(t.memberTypeList) && t.memberTypeList[0] && t.memberTypeList[0].ipRid) || session.ipRId || '',
     operatorNo: t.operatorNo || session.operatorNo || '',
     userIp: session.userIp || '',
-    // 无条件继承旧 couponClaimed(无论 true/false/undefined),防止续期把抢到状态重置丢
+    // \u65e0\u6761\u4ef6\u7ee7\u627f\u65e7 couponClaimed(\u65e0\u8bba true/false/undefined),\u9632\u6b62\u7eed\u671f\u628a\u62a2\u5230\u72b6\u6001\u91cd\u7f6e\u4e22
     couponClaimed: session.couponClaimed,
     authSsuCode: AUTH_SSU,
     note: 'scheduler',
@@ -1014,10 +1140,10 @@ async function authTokenLogin(MGS, session) {
   return s;
 }
 
-// ============ 手机号短信登录 ============
-// 与权益币脚本(bestpay_equity_coin_sniper.cjs)同款登录链:
+// ============ \u624b\u673a\u53f7\u77ed\u4fe1\u767b\u5f55 ============
+// \u4e0e\u6743\u76ca\u5e01\u811a\u672c(bestpay_equity_coin_sniper.cjs)\u540c\u6b3e\u767b\u5f55\u94fe:
 //   sendSmsVerifyCode -> authSmsVerifyCode -> authTokenLogin
-// smsUid 落盘到 ~/.bestpay_sms_uid.json, 支持"先发短信→再填验证码"的面板两步流程。
+// smsUid \u843d\u76d8\u5230 ~/.bestpay_sms_uid.json, \u652f\u6301"\u5148\u53d1\u77ed\u4fe1\u2192\u518d\u586b\u9a8c\u8bc1\u7801"\u7684\u9762\u677f\u4e24\u6b65\u6d41\u7a0b\u3002
 const SMS_UID_FILE = path.join(os.homedir(), '.bestpay_sms_uid.json');
 
 function loginExtra() {
@@ -1037,39 +1163,39 @@ function loginParams(extra) {
 }
 
 async function interactiveLogin(MGS, { phone: phoneArg = '', smsCode: codeArg = '', sendSmsOnly = false } = {}) {
-  const phone = normalizePhone(phoneArg || await ask('请输入手机号: '));
-  if (!phone) throw new Error('手机号无效 (需 11 位: 1xxxxxxxxxx)');
+  const phone = normalizePhone(phoneArg || await ask('\u8bf7\u8f93\u5165\u624b\u673a\u53f7: '));
+  if (!phone) throw new Error('\u624b\u673a\u53f7\u65e0\u6548 (\u9700 11 \u4f4d: 1xxxxxxxxxx)');
 
   let smsUid = '';
-  // 已有验证码 + 已存 smsUid → 直接校验, 不再发短信 (面板两步)
+  // \u5df2\u6709\u9a8c\u8bc1\u7801 + \u5df2\u5b58 smsUid \u2192 \u76f4\u63a5\u6821\u9a8c, \u4e0d\u518d\u53d1\u77ed\u4fe1 (\u9762\u677f\u4e24\u6b65)
   if (codeArg && !sendSmsOnly && fs.existsSync(SMS_UID_FILE)) {
     try {
       const saved = JSON.parse(fs.readFileSync(SMS_UID_FILE, 'utf8'));
       if (saved && saved.phone === phone && saved.smsUid) {
         smsUid = saved.smsUid;
-        log('复用已存 smsUid=', smsUid, 'phone=', maskPhone(phone));
+        log('\u590d\u7528\u5df2\u5b58 smsUid=', smsUid, 'phone=', maskPhone(phone));
       }
     } catch (_) {}
   }
 
   if (!smsUid) {
-    log('发送短信 ->', maskPhone(phone));
+    log('\u53d1\u9001\u77ed\u4fe1 ->', maskPhone(phone));
     const sendRes = await rpc(MGS, OP.sendSms, loginParams({ productNo: phone }), loginExtra());
     const sd = parseRpcData(sendRes);
     smsUid = sd && sd.data && sd.data.t && sd.data.t.smsUid;
-    if (!smsUid) throw new Error('发短信失败: ' + JSON.stringify(sd).slice(0, 300));
-    log('已发码 smsUid=', smsUid);
+    if (!smsUid) throw new Error('\u53d1\u77ed\u4fe1\u5931\u8d25: ' + JSON.stringify(sd).slice(0, 300));
+    log('\u5df2\u53d1\u7801 smsUid=', smsUid);
     try { fs.writeFileSync(SMS_UID_FILE, JSON.stringify({ phone, smsUid, at: new Date().toISOString() }, null, 2)); } catch (_) {}
   }
 
   if (sendSmsOnly) {
-    log('send-sms-only ok, smsUid 已存', SMS_UID_FILE);
+    log('send-sms-only ok, smsUid \u5df2\u5b58', SMS_UID_FILE);
     return { phone, smsUid, sendSmsOnly: true };
   }
 
   let code = codeArg;
-  if (!code) code = await ask('请输入短信验证码: ');
-  if (!/^\d{4,8}$/.test(code)) throw new Error('验证码无效');
+  if (!code) code = await ask('\u8bf7\u8f93\u5165\u77ed\u4fe1\u9a8c\u8bc1\u7801: ');
+  if (!/^\d{4,8}$/.test(code)) throw new Error('\u9a8c\u8bc1\u7801\u65e0\u6548');
   const verifyRes = await rpc(MGS, OP.verifySms, loginParams({
     verifyCode: code, smsUid, productNo: phone,
     issueSite: '0101', externalChannel: 'WECHAT', deviceId: phone,
@@ -1077,7 +1203,7 @@ async function interactiveLogin(MGS, { phone: phoneArg = '', smsCode: codeArg = 
   }), loginExtra());
   const vd = parseRpcData(verifyRes);
   const t = (vd && vd.data && vd.data.t) || {};
-  if (!t.sessionKey) throw new Error('登录失败: ' + JSON.stringify(vd).slice(0, 400));
+  if (!t.sessionKey) throw new Error('\u767b\u5f55\u5931\u8d25: ' + JSON.stringify(vd).slice(0, 400));
   const list = t.memberTypeList || [];
   const tech = list.find((x) => String(x.type) === '8901' || x.type === 'KJHY') || list[0] || {};
   const s = {
@@ -1096,7 +1222,7 @@ async function interactiveLogin(MGS, { phone: phoneArg = '', smsCode: codeArg = 
   try { Object.assign(s, await authTokenLogin(MGS, s)); } catch (_) {}
   saveSession(s);
   try { fs.unlinkSync(SMS_UID_FILE); } catch (_) {}
-  log('登录成功', maskPhone(phone), String(s.sessionKey).slice(0, 12) + '...');
+  log('\u767b\u5f55\u6210\u529f', maskPhone(phone), String(s.sessionKey).slice(0, 12) + '...');
   return s;
 }
 
@@ -1107,8 +1233,8 @@ function saveSession(s) {
     if (!key) return;
     all[key] = s;
     fs.writeFileSync(SESSIONS_FILE, JSON.stringify(all, null, 2));
-    log('已保存 session ->', SESSIONS_FILE, '(' + maskPhone(key) + ')');
-  } catch (e) { log('保存 session 失败:', e.message); }
+    log('\u5df2\u4fdd\u5b58 session ->', SESSIONS_FILE, '(' + maskPhone(key) + ')');
+  } catch (e) { log('\u4fdd\u5b58 session \u5931\u8d25:', e.message); }
 }
 
 async function queryMoneyMainInfo(MGS, session, appType = '117') {
@@ -1138,7 +1264,7 @@ async function finishTask(MGS, session, taskNo, missionType, passAmt, appType = 
   const res = await rpc(MGS, OP.sendTaskMessAge, body, h5Headers(session, appType), session);
   return parseRpcData(res);
 }
-// 领取任务奖励 (GET 模式金币任务必须显式领取才到账)
+// \u9886\u53d6\u4efb\u52a1\u5956\u52b1 (GET \u6a21\u5f0f\u91d1\u5e01\u4efb\u52a1\u5fc5\u987b\u663e\u5f0f\u9886\u53d6\u624d\u5230\u8d26)
 async function getReward(MGS, session, taskNo, appType = '117') {
   const body = h5Body(session, appType, { taskNo, channel: 'App' });
   const res = await rpc(MGS, OP.getReward, body, h5Headers(session, appType), session);
@@ -1162,14 +1288,14 @@ async function querySignInConfigInfo(MGS, session, sceneCode, appType = '117') {
   return parseRpcData(res);
 }
 
-// 完整签到: queryPageConfig -> querySignInConfigInfo -> signIn
+// \u5b8c\u6574\u7b7e\u5230: queryPageConfig -> querySignInConfigInfo -> signIn
 async function fullSignIn(MGS, session, appType = '117') {
-  // 1. queryPageConfig 拿 sceneCode
+  // 1. queryPageConfig \u62ff sceneCode
   const pc = await queryPageConfig(MGS, session, appType);
   const pcRes = pc && pc.data && (pc.data.t || pc.data.result);
   const sceneCode = pcRes && pcRes.signInSceneCode;
   if (!sceneCode) return { step: 'queryPageConfig', error: 'no sceneCode', raw: pc };
-  // 2. querySignInConfigInfo 拿 activityNo
+  // 2. querySignInConfigInfo \u62ff activityNo
   const ci = await querySignInConfigInfo(MGS, session, sceneCode, appType);
   const ciRes = ci && ci.data && (ci.data.t || ci.data.result);
   const info = ciRes && ciRes.signInActivityConfigInfo;
@@ -1180,109 +1306,109 @@ async function fullSignIn(MGS, session, appType = '117') {
   return { step: 'signIn', sceneCode, activityNo, raw: si };
 }
 
-// ============ 工具 ============
-// 跑满后停掉 launchd 调度 (当天不再触发); 由 com.bestpay.task.reset 每天0点重新 load
+// ============ \u5de5\u5177 ============
+// \u8dd1\u6ee1\u540e\u505c\u6389 launchd \u8c03\u5ea6 (\u5f53\u5929\u4e0d\u518d\u89e6\u53d1); \u7531 com.bestpay.task.reset \u6bcf\u59290\u70b9\u91cd\u65b0 load
 const SCHED_PLIST = path.join(os.homedir(), 'Library/LaunchAgents/com.bestpay.task.scheduler.plist');
 function disableLaunchd(reason) {
   try {
     execSync('launchctl unload ' + SCHED_PLIST, { stdio: 'ignore' });
-    log(`[停调度] ${reason} → 已 unload com.bestpay.task.scheduler (明天0点由 reset 恢复)`);
+    log(`[\u505c\u8c03\u5ea6] ${reason} \u2192 \u5df2 unload com.bestpay.task.scheduler (\u660e\u59290\u70b9\u7531 reset \u6062\u590d)`);
     return true;
   } catch (e) {
-    log(`[停调度] unload 失败: ${e.message}`);
+    log(`[\u505c\u8c03\u5ea6] unload \u5931\u8d25: ${e.message}`);
     return false;
   }
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// 硬超时包装: 防卡死, 超时返回 null
+// \u786c\u8d85\u65f6\u5305\u88c5: \u9632\u5361\u6b7b, \u8d85\u65f6\u8fd4\u56de null
 function withTimeout(promise, ms, label) {
   return Promise.race([
     promise,
     new Promise((_, rej) => setTimeout(() => rej(new Error('HARD_TIMEOUT ' + (label || '') + ' ' + ms + 'ms')), ms)),
   ]);
 }
-// 随机延时 [min, max] 秒
+// \u968f\u673a\u5ef6\u65f6 [min, max] \u79d2
 const randSleep = async (min, max) => {
   const ms = min * 1000 + Math.random() * ((max - min) * 1000);
   await sleep(Math.round(ms));
 };
 
-// 从任务列表结果里取任务数组 (字段名 missionList)
+// \u4ece\u4efb\u52a1\u5217\u8868\u7ed3\u679c\u91cc\u53d6\u4efb\u52a1\u6570\u7ec4 (\u5b57\u6bb5\u540d missionList)
 function extractTaskList(d) {
   if (!d) return [];
   const t = unwrap(d);
   const list = (t && t.missionList) || (d.data && d.data.result && d.data.result.missionList) || (d.data && d.data.t && d.data.t.missionList) || [];
   return Array.isArray(list) ? list : [];
 }
-// 从金额主页取 configNo
+// \u4ece\u91d1\u989d\u4e3b\u9875\u53d6 configNo
 function extractConfigNo(mi) {
   const t = mi && unwrap(mi);
   return (t && t.configNo) || '';
 }
 
-// ============ 单账号刷任务 ============
-// 任务类型定义: {missionType, maxPerDay, unitPrice?, batch}
+// ============ \u5355\u8d26\u53f7\u5237\u4efb\u52a1 ============
+// \u4efb\u52a1\u7c7b\u578b\u5b9a\u4e49: {missionType, maxPerDay, unitPrice?, batch}
 const TASK_DEFS = {
-  ad_show: { missionType: 'AD_show', maxPerDay: 10, unitPrice: 150000, batch: 3, name: '看视频' },
-  ad_click: { missionType: 'AD_click', maxPerDay: 20, batch: 5, name: '点广告' },
-  drama: { missionType: 'DRAMA_DURATION', maxPerDay: 3, batch: 3, name: '看短剧' },
+  ad_show: { missionType: 'AD_show', maxPerDay: 10, unitPrice: 150000, batch: 3, name: '\u770b\u89c6\u9891' },
+  ad_click: { missionType: 'AD_click', maxPerDay: 20, batch: 5, name: '\u70b9\u5e7f\u544a' },
+  drama: { missionType: 'DRAMA_DURATION', maxPerDay: 3, batch: 3, name: '\u770b\u77ed\u5267' },
 };
 
 async function runAccount(MGS, phone, session, taskKeys, opts) {
   const dryRun = opts.dryRun;
-  const maxPerRun = opts.maxPerRun || 3; // 每次运行最多报的次数
-  let signInStatus = '未执行';
+  const maxPerRun = opts.maxPerRun || 3; // \u6bcf\u6b21\u8fd0\u884c\u6700\u591a\u62a5\u7684\u6b21\u6570
+  let signInStatus = '\u672a\u6267\u884c';
   const doneByTask = {};
-  log(`\n===== 账号 ${maskPhone(phone)} =====`);
-  // 续期
+  log(`\n===== \u8d26\u53f7 ${maskPhone(phone)} =====`);
+  // \u7eed\u671f
   try {
     const fresh = await withTimeout(authTokenLogin(MGS, session), 35000, 'authTokenLogin');
     Object.assign(session, fresh);
-    log(`  续期OK sessionKey=${session.sessionKey.slice(0, 8)}...`);
+    log(`  \u7eed\u671fOK sessionKey=${session.sessionKey.slice(0, 8)}...`);
   } catch (e) {
-    log(`  续期失败: ${e.message}`);
+    log(`  \u7eed\u671f\u5931\u8d25: ${e.message}`);
   }
 
-  // 查 configNo + 余额
+  // \u67e5 configNo + \u4f59\u989d
   let configNo = '';
   try {
     const mi = await withTimeout(queryMoneyMainInfo(MGS, session, '117'), 35000, 'queryMoneyMainInfo');
     configNo = extractConfigNo(mi);
     log(`  configNo=${configNo}`);
   } catch (e) {
-    log(`  queryMoneyMainInfo失败: ${e.message}`);
+    log(`  queryMoneyMainInfo\u5931\u8d25: ${e.message}`);
   }
   let balBefore = -1;
   try {
     const bal = await withTimeout(queryBalance(MGS, session, '117', configNo), 35000, 'queryBalance');
     const t = unwrap(bal);
     balBefore = (t && t.totalScore) != null ? t.totalScore : balBefore;
-    log(`  余额=${balBefore}`);
+    log(`  \u4f59\u989d=${balBefore}`);
   } catch (e) {
-    log(`  查余额失败: ${e.message}`);
+    log(`  \u67e5\u4f59\u989d\u5931\u8d25: ${e.message}`);
   }
 
-  // 签到
+  // \u7b7e\u5230
   try {
     const si = await withTimeout(fullSignIn(MGS, session, '117'), 40000, 'fullSignIn');
-    log(`  签到[${si.step}] ${si.error ? '失败: ' + si.error : (si.activityNo ? 'activityNo=' + si.activityNo : '')}`);
+    log(`  \u7b7e\u5230[${si.step}] ${si.error ? '\u5931\u8d25: ' + si.error : (si.activityNo ? 'activityNo=' + si.activityNo : '')}`);
     if (si.step === 'signIn') {
       const siRaw = si.raw && si.raw.data;
-      const siRes = siRaw && (siRaw.t || siRaw.result || siRaw); // data 平铺时直接用 data 本体
+      const siRes = siRaw && (siRaw.t || siRaw.result || siRaw); // data \u5e73\u94fa\u65f6\u76f4\u63a5\u7528 data \u672c\u4f53
       const ok = !!(siRes && (siRes.ok === true || siRes.status === 'SUCCESS' || siRes.success === true || siRes.rewardDesc || siRes.balance));
-      signInStatus = ok ? '成功' : ((siRes && (siRes.primaryErrMsg || siRes.errMsg)) || '返回异常');
-      log(`  签到结果: ${ok ? 'SUCCESS' : JSON.stringify(siRes || si.raw).slice(0, 160)}`);
+      signInStatus = ok ? '\u6210\u529f' : ((siRes && (siRes.primaryErrMsg || siRes.errMsg)) || '\u8fd4\u56de\u5f02\u5e38');
+      log(`  \u7b7e\u5230\u7ed3\u679c: ${ok ? 'SUCCESS' : JSON.stringify(siRes || si.raw).slice(0, 160)}`);
     } else {
-      signInStatus = '跳过:' + si.error;
+      signInStatus = '\u8df3\u8fc7:' + si.error;
     }
   } catch (e) {
-    signInStatus = '失败:' + e.message;
-    log(`  签到失败: ${e.message}`);
+    signInStatus = '\u5931\u8d25:' + e.message;
+    log(`  \u7b7e\u5230\u5931\u8d25: ${e.message}`);
   }
   await randSleep(1, 3);
 
-  // 全满预检: 拉一次列表, 若 taskKeys 所有任务都已完成/满, 直接停 (不上报不空转)
+  // \u5168\u6ee1\u9884\u68c0: \u62c9\u4e00\u6b21\u5217\u8868, \u82e5 taskKeys \u6240\u6709\u4efb\u52a1\u90fd\u5df2\u5b8c\u6210/\u6ee1, \u76f4\u63a5\u505c (\u4e0d\u4e0a\u62a5\u4e0d\u7a7a\u8f6c)
   try {
     const pre = await withTimeout(queryMoneyTasks(MGS, session, 'MAKE_MONEY_MISSION', '117'), 35000, 'queryMoneyTasks(pre)');
     const preTasks = extractTaskList(pre);
@@ -1290,29 +1416,29 @@ async function runAccount(MGS, phone, session, taskKeys, opts) {
       const def = TASK_DEFS[k];
       if (!def) return false;
       const t = preTasks.find((x) => x.businessType === def.missionType || x.missionType === def.missionType);
-      if (!t) return true; // 任务不存在视为已完成, 跳过
+      if (!t) return true; // \u4efb\u52a1\u4e0d\u5b58\u5728\u89c6\u4e3a\u5df2\u5b8c\u6210, \u8df3\u8fc7
       const al = t.alreadyCompleteCount != null ? t.alreadyCompleteCount : (t.alreadyComplete || t.completedCount || 0);
       return t.status === 'FINISH' || al >= def.maxPerDay;
     });
     if (allFinished && taskKeys.length > 0) {
-      log(`[全满] 所有任务(${taskKeys.join(',')})已跑满, 本轮无需执行, 直接停`);
-      disableLaunchd('所有任务已跑满');
+      log(`[\u5168\u6ee1] \u6240\u6709\u4efb\u52a1(${taskKeys.join(',')})\u5df2\u8dd1\u6ee1, \u672c\u8f6e\u65e0\u9700\u6267\u884c, \u76f4\u63a5\u505c`);
+      disableLaunchd('\u6240\u6709\u4efb\u52a1\u5df2\u8dd1\u6ee1');
       return;
     }
   } catch (e) {
-    log(`  全满预检失败: ${e.message} → 继续正常跑`);
+    log(`  \u5168\u6ee1\u9884\u68c0\u5931\u8d25: ${e.message} \u2192 \u7ee7\u7eed\u6b63\u5e38\u8dd1`);
   }
 
   for (const key of taskKeys) {
     const def = TASK_DEFS[key];
-    if (!def) { log(`  未知任务 ${key}`); continue; }
-    log(`\n  --- ${def.name} (${def.missionType}, 上限${def.maxPerDay}/天) ---`);
+    if (!def) { log(`  \u672a\u77e5\u4efb\u52a1 ${key}`); continue; }
+    log(`\n  --- ${def.name} (${def.missionType}, \u4e0a\u9650${def.maxPerDay}/\u5929) ---`);
     await randSleep(1, 3);
 
-    // 每次重新拉列表拿最新 taskNo 和 alreadyComplete, 断点续跑
-    // 每次运行只报 maxPerRun 次 (默认2), 靠 launchd 多次触发累积到日上限, 防一次跑满触发风控
+    // \u6bcf\u6b21\u91cd\u65b0\u62c9\u5217\u8868\u62ff\u6700\u65b0 taskNo \u548c alreadyComplete, \u65ad\u70b9\u7eed\u8dd1
+    // \u6bcf\u6b21\u8fd0\u884c\u53ea\u62a5 maxPerRun \u6b21 (\u9ed8\u8ba42), \u9760 launchd \u591a\u6b21\u89e6\u53d1\u7d2f\u79ef\u5230\u65e5\u4e0a\u9650, \u9632\u4e00\u6b21\u8dd1\u6ee1\u89e6\u53d1\u98ce\u63a7
     const runLimit = Math.min(def.maxPerDay, maxPerRun);
-    log(`  本次运行最多 ${runLimit} 次 (日上限${def.maxPerDay})`);
+    log(`  \u672c\u6b21\u8fd0\u884c\u6700\u591a ${runLimit} \u6b21 (\u65e5\u4e0a\u9650${def.maxPerDay})`);
     let doneCount = 0;
     let remaining = def.maxPerDay;
     for (let round = 0; round < runLimit; round++) {
@@ -1321,106 +1447,106 @@ async function runAccount(MGS, phone, session, taskKeys, opts) {
         const d = await withTimeout(queryMoneyTasks(MGS, session, 'MAKE_MONEY_MISSION', '117'), 35000, 'queryMoneyTasks');
         tasks = extractTaskList(d);
       } catch (e) {
-        log(`  拉任务列表失败(第${round + 1}轮): ${e.message} → 跳过本轮`);
+        log(`  \u62c9\u4efb\u52a1\u5217\u8868\u5931\u8d25(\u7b2c${round + 1}\u8f6e): ${e.message} \u2192 \u8df3\u8fc7\u672c\u8f6e`);
         await randSleep(3, 6);
         continue;
       }
-      // 找到匹配 missionType 的任务
+      // \u627e\u5230\u5339\u914d missionType \u7684\u4efb\u52a1
       const task = tasks.find((t) => t.businessType === def.missionType || t.missionType === def.missionType);
-      if (!task) { log(`  未找到 ${def.missionType} 任务, 停止`); break; }
+      if (!task) { log(`  \u672a\u627e\u5230 ${def.missionType} \u4efb\u52a1, \u505c\u6b62`); break; }
       const taskNo = task.taskNo;
       const already = task.alreadyCompleteCount != null ? task.alreadyCompleteCount : (task.alreadyComplete || task.completedCount || 0);
       const finished = task.status === 'FINISH' || already >= def.maxPerDay;
-      if (finished) { log(`  已完成 ${already}/${def.maxPerDay} (status=${task.status}), 跳过`); remaining = 0; break; }
+      if (finished) { log(`  \u5df2\u5b8c\u6210 ${already}/${def.maxPerDay} (status=${task.status}), \u8df3\u8fc7`); remaining = 0; break; }
 
-      // 看视频走 getDynamicScore 拿分数
+      // \u770b\u89c6\u9891\u8d70 getDynamicScore \u62ff\u5206\u6570
       let passAmt = null;
       if (key === 'ad_show') {
         try {
-          // 随机上报单价(到账=unitPrice*0.04), 每次不同防风控规律
-          // 单次到账>=2800 -> 上报>=70000; 范围70000~90000, 10次最低总额=28000
+          // \u968f\u673a\u4e0a\u62a5\u5355\u4ef7(\u5230\u8d26=unitPrice*0.04), \u6bcf\u6b21\u4e0d\u540c\u9632\u98ce\u63a7\u89c4\u5f8b
+          // \u5355\u6b21\u5230\u8d26>=2800 -> \u4e0a\u62a5>=70000; \u8303\u56f470000~90000, 10\u6b21\u6700\u4f4e\u603b\u989d=28000
           const unitPrice = 70000 + Math.floor(Math.random() * 20001); // 70000..90000
           const ds = await withTimeout(getDynamicScore(MGS, session, configNo, unitPrice, '117'), 35000, 'getDynamicScore');
           const dt = unwrap(ds);
           const score = (dt && dt.score) != null ? dt.score : -1;
-          if (score <= 1) { log(`  动态分数=${score} 异常(可能已封顶), 停止`); break; }
+          if (score <= 1) { log(`  \u52a8\u6001\u5206\u6570=${score} \u5f02\u5e38(\u53ef\u80fd\u5df2\u5c01\u9876), \u505c\u6b62`); break; }
           passAmt = unitPrice;
-          log(`  动态分数=${score} (unitPrice=${unitPrice})`);
+          log(`  \u52a8\u6001\u5206\u6570=${score} (unitPrice=${unitPrice})`);
         } catch (e) {
-          log(`  getDynamicScore失败: ${e.message} → 跳过`); continue;
+          log(`  getDynamicScore\u5931\u8d25: ${e.message} \u2192 \u8df3\u8fc7`); continue;
         }
       }
 
-      if (dryRun) { log(`  [dry-run] 上报 ${def.missionType} taskNo=${taskNo} passAmt=${passAmt}`); doneCount++; continue; }
+      if (dryRun) { log(`  [dry-run] \u4e0a\u62a5 ${def.missionType} taskNo=${taskNo} passAmt=${passAmt}`); doneCount++; continue; }
 
       try {
         const fd = await withTimeout(finishTask(MGS, session, taskNo, def.missionType, passAmt, '117'), 35000, 'finishTask');
         const fdt = unwrap(fd);
         const ok = fd && fd.success === true || (fdt && fdt.status === 'SUCCESS');
-        log(`  第${round + 1}次 上报 → ${ok ? 'SUCCESS' : JSON.stringify(fd).slice(0, 120)}`);
+        log(`  \u7b2c${round + 1}\u6b21 \u4e0a\u62a5 \u2192 ${ok ? 'SUCCESS' : JSON.stringify(fd).slice(0, 120)}`);
         if (!ok) {
-          // 若返回已领取/已满, 停止
+          // \u82e5\u8fd4\u56de\u5df2\u9886\u53d6/\u5df2\u6ee1, \u505c\u6b62
           const s = JSON.stringify(fd || '');
-          if (s.includes('already') || s.includes('complete') || s.includes('已领取') || s.includes('已满')) break;
+          if (s.includes('already') || s.includes('complete') || s.includes('\u5df2\u9886\u53d6') || s.includes('\u5df2\u6ee1')) break;
         }
         doneCount++;
-        // 上报成功后领取奖励 (GET 模式金币任务必须显式领取才到账)
+        // \u4e0a\u62a5\u6210\u529f\u540e\u9886\u53d6\u5956\u52b1 (GET \u6a21\u5f0f\u91d1\u5e01\u4efb\u52a1\u5fc5\u987b\u663e\u5f0f\u9886\u53d6\u624d\u5230\u8d26)
         if (!dryRun) {
           try {
-            log(`  领取奖励 ${def.missionType}...`);
+            log(`  \u9886\u53d6\u5956\u52b1 ${def.missionType}...`);
             const gr = await withTimeout(getReward(MGS, session, taskNo, '117'), 35000, 'getReward');
             const g = JSON.stringify(gr || '');
-            if (g.includes('TB0001') || g.includes('太频繁')) {
-              log(`  领取被风控拦截(TB0001): ${g.slice(0, 120)} → 停止本轮避免加剧`);
+            if (g.includes('TB0001') || g.includes('\u592a\u9891\u7e41')) {
+              log(`  \u9886\u53d6\u88ab\u98ce\u63a7\u62e6\u622a(TB0001): ${g.slice(0, 120)} \u2192 \u505c\u6b62\u672c\u8f6e\u907f\u514d\u52a0\u5267`);
               break;
             }
-            log(`  领取结果: ${g.slice(0, 160)}`);
+            log(`  \u9886\u53d6\u7ed3\u679c: ${g.slice(0, 160)}`);
           } catch (e) {
-            log(`  领取失败: ${e.message}`);
+            log(`  \u9886\u53d6\u5931\u8d25: ${e.message}`);
           }
         }
       } catch (e) {
-        log(`  上报失败(第${round + 1}次): ${e.message}`);
-        // 网络抖动重试, 指数退避
+        log(`  \u4e0a\u62a5\u5931\u8d25(\u7b2c${round + 1}\u6b21): ${e.message}`);
+        // \u7f51\u7edc\u6296\u52a8\u91cd\u8bd5, \u6307\u6570\u9000\u907f
         await randSleep(3, 6);
         continue;
       }
 
-      // 随机延时 (拉长, 降低触发服务端吞分风控): 单次 8-15s, 每批(3次)后 20-40s
+      // \u968f\u673a\u5ef6\u65f6 (\u62c9\u957f, \u964d\u4f4e\u89e6\u53d1\u670d\u52a1\u7aef\u541e\u5206\u98ce\u63a7): \u5355\u6b21 8-15s, \u6bcf\u6279(3\u6b21)\u540e 20-40s
       if ((round + 1) % def.batch === 0 && round + 1 < def.maxPerDay) {
-        log(`    批间休息...`);
+        log(`    \u6279\u95f4\u4f11\u606f...`);
         await randSleep(20, 40);
       } else if (round + 1 < def.maxPerDay) {
         await randSleep(8, 15);
       }
     }
-    log(`  ${def.name} 本轮完成 ${doneCount} 次`);
+    log(`  ${def.name} \u672c\u8f6e\u5b8c\u6210 ${doneCount} \u6b21`);
     doneByTask[def.name] = doneCount;
     await randSleep(2, 4);
   }
 
-  // 最终余额:先重新续期 session, 避免上报过程中 session 失效导致查到旧值
+  // \u6700\u7ec8\u4f59\u989d:\u5148\u91cd\u65b0\u7eed\u671f session, \u907f\u514d\u4e0a\u62a5\u8fc7\u7a0b\u4e2d session \u5931\u6548\u5bfc\u81f4\u67e5\u5230\u65e7\u503c
   let balAfter = balBefore;
   if (!dryRun && configNo) {
     try {
-      const fresh2 = await withTimeout(authTokenLogin(MGS, session), 35000, 'authTokenLogin(最终)');
+      const fresh2 = await withTimeout(authTokenLogin(MGS, session), 35000, 'authTokenLogin(\u6700\u7ec8)');
       Object.assign(session, fresh2);
       const bal = await withTimeout(queryBalance(MGS, session, '117', configNo), 35000, 'queryBalance');
       const t = unwrap(bal);
       balAfter = (t && t.totalScore) != null ? t.totalScore : balAfter;
-      log(`\n  余额 ${balBefore} → ${balAfter}  (+${balAfter - balBefore})`);
+      log(`\n  \u4f59\u989d ${balBefore} \u2192 ${balAfter}  (+${balAfter - balBefore})`);
     } catch (e) {
-      log(`  查最终余额失败: ${e.message}`);
+      log(`  \u67e5\u6700\u7ec8\u4f59\u989d\u5931\u8d25: ${e.message}`);
     }
   }
   return { phone, balBefore, balAfter, signIn: signInStatus, done: doneByTask };
 }
 
-// ============ 主流程 ============
-// 全局看门狗: 单次运行总预算(默认 25 分钟), 到点强制退出, 防任何 await 卡死
+// ============ \u4e3b\u6d41\u7a0b ============
+// \u5168\u5c40\u770b\u95e8\u72d7: \u5355\u6b21\u8fd0\u884c\u603b\u9884\u7b97(\u9ed8\u8ba4 25 \u5206\u949f), \u5230\u70b9\u5f3a\u5236\u9000\u51fa, \u9632\u4efb\u4f55 await \u5361\u6b7b
 const GLOBAL_BUDGET_MS = 25 * 60 * 1000;
 const _watchdog = setTimeout(() => {
-  log(`[watchdog] 总运行超 ${GLOBAL_BUDGET_MS / 60000} 分钟, 强制退出`);
+  log(`[watchdog] \u603b\u8fd0\u884c\u8d85 ${GLOBAL_BUDGET_MS / 60000} \u5206\u949f, \u5f3a\u5236\u9000\u51fa`);
   process.exit(0);
 }, GLOBAL_BUDGET_MS);
 _watchdog.unref();
@@ -1431,161 +1557,161 @@ async function main() {
   const rawArgPhone = argVal('--phone');
   const envPhone = normalizePhone(process.env.BESTPAY_PHONE || '');
   const argPhone = normalizePhone(rawArgPhone);
-  if (rawArgPhone && !argPhone) { log('手机号无效: ' + rawArgPhone + ' (需 11 位: 1xxxxxxxxxx)'); return; }
+  if (rawArgPhone && !argPhone) { log('\u624b\u673a\u53f7\u65e0\u6548: ' + rawArgPhone + ' (\u9700 11 \u4f4d: 1xxxxxxxxxx)'); return; }
   const doLogin = args.includes('--login') || args.includes('--send-sms');
   const all = readSessionsFile();
   const phones = args.includes('--all') ? Object.keys(all) : [];
   if (!args.includes('--all')) {
     const p = argPhone || envPhone;
     if (p) phones.push(p);
-    else if (!doLogin) log('提示: 未指定手机号 (--phone <手机号> 或 BESTPAY_PHONE)');
+    else if (!doLogin) log('\u63d0\u793a: \u672a\u6307\u5b9a\u624b\u673a\u53f7 (--phone <\u624b\u673a\u53f7> \u6216 BESTPAY_PHONE)');
   }
-  // 去重 + 过滤无 sessionKey 的
+  // \u53bb\u91cd + \u8fc7\u6ee4\u65e0 sessionKey \u7684
   const valid = [...new Set(phones)].filter((p) => all[p] && all[p].sessionKey);
-  if (valid.length === 0 && !doLogin) { log('无有效 session; 首次使用请先: --login --phone <手机号>'); return; }
+  if (valid.length === 0 && !doLogin) { log('\u65e0\u6709\u6548 session; \u9996\u6b21\u4f7f\u7528\u8bf7\u5148: --login --phone <\u624b\u673a\u53f7>'); return; }
 
-  // 任务选择
+  // \u4efb\u52a1\u9009\u62e9
   const ti = args.indexOf('--tasks');
   let taskKeys = ['ad_show', 'ad_click', 'drama'];
   if (ti >= 0) {
     taskKeys = args[ti + 1].split(',').map((s) => s.trim()).filter(Boolean);
   }
   const dryRun = args.includes('--dry-run');
-  // 每次运行最多报的次数 (默认3, 防一次跑满触发风控); 通过 launchd 多次触发累积到日上限
+  // \u6bcf\u6b21\u8fd0\u884c\u6700\u591a\u62a5\u7684\u6b21\u6570 (\u9ed8\u8ba43, \u9632\u4e00\u6b21\u8dd1\u6ee1\u89e6\u53d1\u98ce\u63a7); \u901a\u8fc7 launchd \u591a\u6b21\u89e6\u53d1\u7d2f\u79ef\u5230\u65e5\u4e0a\u9650
   const mi2 = args.indexOf('--max');
   const maxPerRun = mi2 >= 0 ? parseInt(args[mi2 + 1], 10) : 3;
-  if (maxPerRun < 1) { log('--max 必须 >=1'); return; }
-  // 随机模式 (launchd StartInterval 每30分钟触发): 每次随机决定是否执行, 上报前随机延时
-  // 使上报时间点完全随机, 避免固定时间被风控识别
+  if (maxPerRun < 1) { log('--max \u5fc5\u987b >=1'); return; }
+  // \u968f\u673a\u6a21\u5f0f (launchd StartInterval \u6bcf30\u5206\u949f\u89e6\u53d1): \u6bcf\u6b21\u968f\u673a\u51b3\u5b9a\u662f\u5426\u6267\u884c, \u4e0a\u62a5\u524d\u968f\u673a\u5ef6\u65f6
+  // \u4f7f\u4e0a\u62a5\u65f6\u95f4\u70b9\u5b8c\u5168\u968f\u673a, \u907f\u514d\u56fa\u5b9a\u65f6\u95f4\u88ab\u98ce\u63a7\u8bc6\u522b
   if (args.includes('--rand')) {
-    const skipChance = 0.5; // 50% 概率本轮跳过
+    const skipChance = 0.5; // 50% \u6982\u7387\u672c\u8f6e\u8df3\u8fc7
     if (Math.random() < skipChance) {
-      log(`[随机] 本轮跳过 (50%概率), 时间=${new Date().toLocaleTimeString('zh-CN', {hour12:false})}`);
+      log(`[\u968f\u673a] \u672c\u8f6e\u8df3\u8fc7 (50%\u6982\u7387), \u65f6\u95f4=${new Date().toLocaleTimeString('zh-CN', {hour12:false})}`);
       return;
     }
-    // 上报前随机延时 0-5 分钟, 打散时间点
+    // \u4e0a\u62a5\u524d\u968f\u673a\u5ef6\u65f6 0-5 \u5206\u949f, \u6253\u6563\u65f6\u95f4\u70b9
     const delaySec = Math.floor(Math.random() * 300);
-    log(`[随机] 本轮执行, 延时 ${delaySec}s 打散时间点`);
+    log(`[\u968f\u673a] \u672c\u8f6e\u6267\u884c, \u5ef6\u65f6 ${delaySec}s \u6253\u6563\u65f6\u95f4\u70b9`);
     await new Promise((r) => setTimeout(r, delaySec * 1000));
   }
 
-  log('加载 wasm 引擎...');
+  log('\u52a0\u8f7d wasm \u5f15\u64ce...');
   loadWasmEnv();
   const MGS = loadMGS();
-  log('MGS 就绪, 账号数=' + valid.length + ', 任务=' + taskKeys.join(',') + (dryRun ? ' (dry-run)' : ''));
+  log('MGS \u5c31\u7eea, \u8d26\u53f7\u6570=' + valid.length + ', \u4efb\u52a1=' + taskKeys.join(',') + (dryRun ? ' (dry-run)' : ''));
 
-  // 手机号短信登录 / 只发短信 (发码→填码两段式面板)
+  // \u624b\u673a\u53f7\u77ed\u4fe1\u767b\u5f55 / \u53ea\u53d1\u77ed\u4fe1 (\u53d1\u7801\u2192\u586b\u7801\u4e24\u6bb5\u5f0f\u9762\u677f)
   if (doLogin) {
-    const phone = argPhone || envPhone || await ask('请输入手机号: ');
+    const phone = argPhone || envPhone || await ask('\u8bf7\u8f93\u5165\u624b\u673a\u53f7: ');
     if (args.includes('--send-sms')) {
       await interactiveLogin(MGS, { phone, sendSmsOnly: true });
       return;
     }
     const code = (argVal('--code') || argVal('--sms-code') || process.env.BESTPAY_SMS_CODE || '').trim();
     await interactiveLogin(MGS, { phone, smsCode: code });
-    log('登录完成, 当前账号:', Object.keys(readSessionsFile()).map(maskPhone).join(', ') || '(无)');
+    log('\u767b\u5f55\u5b8c\u6210, \u5f53\u524d\u8d26\u53f7:', Object.keys(readSessionsFile()).map(maskPhone).join(', ') || '(\u65e0)');
     return;
   }
 
-  // 单次上报测试: --report <ad_show|ad_click|drama> 强制上报一次 + 查余额对比
+  // \u5355\u6b21\u4e0a\u62a5\u6d4b\u8bd5: --report <ad_show|ad_click|drama> \u5f3a\u5236\u4e0a\u62a5\u4e00\u6b21 + \u67e5\u4f59\u989d\u5bf9\u6bd4
   const ri = args.indexOf('--report');
   if (ri >= 0) {
     const rkey = (args[ri + 1] || 'ad_show').trim();
     const def = TASK_DEFS[rkey];
-    if (!def) { log('未知任务: ' + rkey); return; }
+    if (!def) { log('\u672a\u77e5\u4efb\u52a1: ' + rkey); return; }
     const phone = valid[0];
-    if (!phone) { log('需 --phone <手机号> 指定账号'); return; }
+    if (!phone) { log('\u9700 --phone <\u624b\u673a\u53f7> \u6307\u5b9a\u8d26\u53f7'); return; }
     const session = all[phone];
     session.__phone = phone;
-    log(`单次上报测试: ${maskPhone(phone)} → ${def.name}`);
+    log(`\u5355\u6b21\u4e0a\u62a5\u6d4b\u8bd5: ${maskPhone(phone)} \u2192 ${def.name}`);
     try {
       const fresh = await withTimeout(authTokenLogin(MGS, session), 35000, 'authTokenLogin');
       Object.assign(session, fresh);
-      log('  续期OK sessionKey=' + session.sessionKey.slice(0, 8) + '...');
+      log('  \u7eed\u671fOK sessionKey=' + session.sessionKey.slice(0, 8) + '...');
       const mi = await withTimeout(queryMoneyMainInfo(MGS, session, '117'), 35000, 'queryMoneyMainInfo');
       const configNo = extractConfigNo(mi);
       log('  configNo=' + configNo);
       const bal0 = await withTimeout(queryBalance(MGS, session, '117', configNo), 35000, 'queryBalance');
       const b0 = (unwrap(bal0) && unwrap(bal0).totalScore) != null ? unwrap(bal0).totalScore : -1;
-      log('  上报前余额=' + b0);
-      // 拉任务列表拿 taskNo
+      log('  \u4e0a\u62a5\u524d\u4f59\u989d=' + b0);
+      // \u62c9\u4efb\u52a1\u5217\u8868\u62ff taskNo
       const d = await withTimeout(queryMoneyTasks(MGS, session, 'MAKE_MONEY_MISSION', '117'), 35000, 'queryMoneyTasks');
       const tasks = extractTaskList(d);
       const task = tasks.find((t) => t.businessType === def.missionType || t.missionType === def.missionType);
-      if (!task) { log('  未找到 ' + def.missionType + ' 任务, 中止'); return; }
+      if (!task) { log('  \u672a\u627e\u5230 ' + def.missionType + ' \u4efb\u52a1, \u4e2d\u6b62'); return; }
       log('  taskNo=' + task.taskNo + ' alreadyComplete=' + task.alreadyCompleteCount + ' status=' + task.status);
-      // 看视频先 getDynamicScore
+      // \u770b\u89c6\u9891\u5148 getDynamicScore
       let passAmt = null;
       if (rkey === 'ad_show') {
-        // 随机上报单价(到账=unitPrice*0.04), 每次不同防风控规律
-        // 单次到账>=2800 -> 上报>=70000; 范围70000~90000, 10次最低总额=28000
+        // \u968f\u673a\u4e0a\u62a5\u5355\u4ef7(\u5230\u8d26=unitPrice*0.04), \u6bcf\u6b21\u4e0d\u540c\u9632\u98ce\u63a7\u89c4\u5f8b
+        // \u5355\u6b21\u5230\u8d26>=2800 -> \u4e0a\u62a5>=70000; \u8303\u56f470000~90000, 10\u6b21\u6700\u4f4e\u603b\u989d=28000
         const unitPrice = 70000 + Math.floor(Math.random() * 20001); // 70000..90000
         const ds = await withTimeout(getDynamicScore(MGS, session, configNo, unitPrice, '117'), 35000, 'getDynamicScore');
         const dt = unwrap(ds);
         const score = (dt && dt.score) != null ? dt.score : -1;
-        log('  动态分数=' + score + ' (unitPrice=' + unitPrice + ')');
+        log('  \u52a8\u6001\u5206\u6570=' + score + ' (unitPrice=' + unitPrice + ')');
         if (score > 1) passAmt = unitPrice;
       }
       const fd = await withTimeout(finishTask(MGS, session, task.taskNo, def.missionType, passAmt, '117'), 35000, 'finishTask');
-      log('  上报结果: ' + JSON.stringify(fd).slice(0, 200));
-      // GET 模式金币任务必须领取: 上报后调 newGetReward
-      log('  尝试领取 newGetReward...');
+      log('  \u4e0a\u62a5\u7ed3\u679c: ' + JSON.stringify(fd).slice(0, 200));
+      // GET \u6a21\u5f0f\u91d1\u5e01\u4efb\u52a1\u5fc5\u987b\u9886\u53d6: \u4e0a\u62a5\u540e\u8c03 newGetReward
+      log('  \u5c1d\u8bd5\u9886\u53d6 newGetReward...');
       const gr = await withTimeout(getReward(MGS, session, task.taskNo, '117'), 35000, 'getReward');
-      log('  领取结果: ' + JSON.stringify(gr).slice(0, 300));
-      // 查余额(先续期避免失效 session)
-      const fresh2 = await withTimeout(authTokenLogin(MGS, session), 35000, 'authTokenLogin(后)');
+      log('  \u9886\u53d6\u7ed3\u679c: ' + JSON.stringify(gr).slice(0, 300));
+      // \u67e5\u4f59\u989d(\u5148\u7eed\u671f\u907f\u514d\u5931\u6548 session)
+      const fresh2 = await withTimeout(authTokenLogin(MGS, session), 35000, 'authTokenLogin(\u540e)');
       Object.assign(session, fresh2);
       const bal1 = await withTimeout(queryBalance(MGS, session, '117', configNo), 35000, 'queryBalance');
       const b1 = (unwrap(bal1) && unwrap(bal1).totalScore) != null ? unwrap(bal1).totalScore : -1;
-      log('  上报后余额=' + b1 + '  (+' + (b1 - b0) + ')');
+      log('  \u4e0a\u62a5\u540e\u4f59\u989d=' + b1 + '  (+' + (b1 - b0) + ')');
     } catch (e) {
-      log('  单次上报异常: ' + e.message);
+      log('  \u5355\u6b21\u4e0a\u62a5\u5f02\u5e38: ' + e.message);
     }
     return;
   }
 
-  // 逐个账号跑 (串行, 避免并发风控)
+  // \u9010\u4e2a\u8d26\u53f7\u8dd1 (\u4e32\u884c, \u907f\u514d\u5e76\u53d1\u98ce\u63a7)
   const results = [];
   for (const phone of valid) {
     const session = all[phone];
     session.__phone = phone;
-    // 每账号硬超时保护: 单账号最多 12 分钟
+    // \u6bcf\u8d26\u53f7\u786c\u8d85\u65f6\u4fdd\u62a4: \u5355\u8d26\u53f7\u6700\u591a 12 \u5206\u949f
     try {
       const r = await withTimeout(runAccount(MGS, phone, session, taskKeys, { dryRun, maxPerRun }), 720000, 'account-' + phone);
       results.push(r);
     } catch (e) {
-      log(`账号 ${maskPhone(phone)} 整体超时/失败: ${e.message}`);
+      log(`\u8d26\u53f7 ${maskPhone(phone)} \u6574\u4f53\u8d85\u65f6/\u5931\u8d25: ${e.message}`);
       results.push({ phone, error: e.message });
     }
-    // 账号间随机延时
+    // \u8d26\u53f7\u95f4\u968f\u673a\u5ef6\u65f6
     if (phone !== valid[valid.length - 1]) {
-      log(`账号间休息...`);
+      log(`\u8d26\u53f7\u95f4\u4f11\u606f...`);
       await randSleep(15, 40);
     }
   }
-  log(`\n===== 全部完成, 处理账号 ${results.length} 个 =====`);
+  log(`\n===== \u5168\u90e8\u5b8c\u6210, \u5904\u7406\u8d26\u53f7 ${results.length} \u4e2a =====`);
 
-  // Bark 通知 (成功/失败都推, 内容带活动金币)
+  // Bark \u901a\u77e5 (\u6210\u529f/\u5931\u8d25\u90fd\u63a8, \u5185\u5bb9\u5e26\u6d3b\u52a8\u91d1\u5e01)
   const parts = results.map((r) => {
     if (!r || r.error) {
-      return `${r && r.phone ? maskPhone(r.phone) : '?'}: 失败 ${r && r.error ? r.error : ''}`;
+      return `${r && r.phone ? maskPhone(r.phone) : '?'}: \u5931\u8d25 ${r && r.error ? r.error : ''}`;
     }
     const d = r.done || {};
     const doneDesc = Object.keys(d).length
       ? Object.entries(d).map(([k, v]) => `${k}${v}`).join('/')
-      : '无';
-    const bal = (r.balAfter != null && r.balBefore != null) ? `${r.balBefore}→${r.balAfter}(+${r.balAfter - r.balBefore})` : '?';
-    return `${maskPhone(r.phone)}: 签到${r.signIn} · ${doneDesc} · 金币${bal}`;
+      : '\u65e0';
+    const bal = (r.balAfter != null && r.balBefore != null) ? `${r.balBefore}\u2192${r.balAfter}(+${r.balAfter - r.balBefore})` : '?';
+    return `${maskPhone(r.phone)}: \u7b7e\u5230${r.signIn} \u00b7 ${doneDesc} \u00b7 \u91d1\u5e01${bal}`;
   });
-  const title = dryRun ? '翼支付刷金币(dry-run)' : `翼支付刷金币完成 ${results.length}号`;
+  const title = dryRun ? '\u7ffc\u652f\u4ed8\u5237\u91d1\u5e01(dry-run)' : `\u7ffc\u652f\u4ed8\u5237\u91d1\u5e01\u5b8c\u6210 ${results.length}\u53f7`;
   await sendBark(title, parts.join('\n'));
-  log('bark 通知已发送');
+  log('bark \u901a\u77e5\u5df2\u53d1\u9001');
 }
 
 main().catch((e) => { log('FATAL:', e); process.exit(1); }).then(() => process.exit(0));
 
 }, function (e) {
-  __pushLog(['资产预载失败: ' + (e && e.message ? e.message : e)]);
+  __pushLog(['\u8d44\u4ea7\u9884\u8f7d\u5931\u8d25: ' + (e && e.message ? e.message : e)]);
   __finish();
 });
-/* ==== 原脚本正文结束 ==== */
+/* ==== \u539f\u811a\u672c\u6b63\u6587\u7ed3\u675f ==== */
