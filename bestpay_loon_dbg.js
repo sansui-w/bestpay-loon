@@ -923,6 +923,7 @@ var __DBG_TRACE = function (m) { try { __pushLog(['[DBG] ' + m]); } catch (e) {}
       return _pl(a);
     } catch (e) { return _pl(parts); }
   };
+  __pushLog(['[DBG] ===== build v7-surgical (7\u63a2\u9488\u7248) =====']);
   __pushLog(['[DBG] \u63d2\u6869\u751f\u6548, Loon=' + (typeof $loon !== 'undefined' ? $loon : '?')]);
 
   /* 2) \u5fc3\u8df3\uff1a\u7528 setTimeout \u9012\u5f52\uff0c\u6bd4 setInterval \u4fdd\u9669 */
