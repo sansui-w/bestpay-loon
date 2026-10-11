@@ -382,6 +382,22 @@ if (typeof console !== 'undefined') {
   console.error = function () { __pushLog(Array.prototype.map.call(arguments, __fmtLogArg)); };
 }
 
+/* ---------- \u00a76b  Date.toTimeString \u515c\u5e95 ----------------------------------
+ * \u6b63\u6587 log() \u7b2c\u4e00\u4ef6\u4e8b\u5c31\u662f new Date().toTimeString().slice(0,8)\u3002
+ * \u82e5\u5b83\u5728\u5bbf\u4e3b JSC \u91cc\u629b\u9519: main() \u5728\u7b2c\u4e00\u6761\u65e5\u5fd7\u524d\u5c31 reject, .catch \u91cc\u518d\u8c03 log()
+ * \u53c8\u629b \u2192 rejection \u65e0\u4eba\u63a5\u88ab\u9759\u9ed8\u541e\u6389 \u2192 \u8868\u73b0\u4e3a"\u65e0\u4efb\u4f55\u6b63\u6587\u65e5\u5fd7 + \u5fc3\u8df3\u8fd8\u5728\u8df3"\u3002
+ * \u76f4\u63a5\u7528\u672c\u5730\u5b9e\u73b0\u8986\u76d6, \u6c38\u4e0d\u629b\u9519\uff08\u8f93\u51fa\u683c\u5f0f\u4e0e\u539f\u751f\u4e00\u81f4\u7684\u524d 8 \u4f4d\uff09\u3002
+ * ------------------------------------------------------------------------ */
+(function () {
+  function __tts() {
+    try {
+      var d = this, p = function (n) { return (n < 10 ? '0' : '') + n; };
+      return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + ' GMT+0800';
+    } catch (e) { return '00:00:00'; }
+  }
+  try { Date.prototype.toTimeString = __tts; } catch (e) {}
+})();
+
 /* ---------- \u00a76  Loon \u6301\u4e45\u5316\uff08\u66ff\u4ee3 ~/.bestpay_*.json\uff09--------------------- */
 var __STORE = {
   get: function (k) { try { return (typeof $persistentStore !== 'undefined') ? $persistentStore.read(k) : null; } catch (e) { return null; } },
@@ -1041,6 +1057,28 @@ var __DBG_TRACE = function (m) { try { __pushLog(['[DBG] ' + m]); } catch (e) {}
     }
   } catch (e) {}
 })();
+
+  /* 7) toTimeString \u63a2\u9488\uff08\u6000\u7591\u5b83\u5728 JSC \u629b\u9519, \u5bfc\u81f4\u6b63\u6587\u65e5\u5fd7\u5168\u706d\uff09 */
+  try {
+    var __v = new Date().toTimeString();
+    __pushLog(['[DBG] toTimeString() = ' + String(__v).slice(0, 20)]);
+  } catch (e) { __pushLog(['[DBG] toTimeString \u629b\u9519: ' + e]); }
+
+  /* 8) existsSync \u63d2\u6869\uff08readSessionsFile \u5148\u8c03\u7684\u662f\u5b83\uff09 */
+  try {
+    var _ex = __FS.existsSync;
+    __FS.existsSync = function (p) {
+      var r = _ex.call(__FS, p);
+      __pushLog(['[DBG] existsSync(' + p + ') = ' + r]);
+      return r;
+    };
+  } catch (e) { __pushLog(['[DBG] existsSync \u63d2\u6869\u5931\u8d25: ' + e]); }
+
+  /* 9) process.exit \u63d2\u6869 */
+  try {
+    var _oldExit = process.exit;
+    process.exit = function (c) { __pushLog(['[DBG] process.exit(' + c + ')']); return _oldExit(c); };
+  } catch (e) {}
 
 /* ==== \u539f\u811a\u672c\u6b63\u6587\u5f00\u59cb\uff08\u9010\u5b57\u4fdd\u7559\uff09==== */
 Promise.resolve().then(function () { return __preloadAssets(); }).then(function () {
@@ -1976,6 +2014,8 @@ async function main() {
 }
 
 main().catch((e) => { log('FATAL:', e); process.exit(1); }).then(() => process.exit(0));
+
+if (typeof __DBG_TRACE === 'function') __DBG_TRACE('\u6b63\u6587\u9876\u5c42\u6267\u884c\u5b8c\u6bd5(\u542b main \u8c03\u7528)');
 
 }, function (e) {
   __pushLog(['\u8d44\u4ea7\u9884\u8f7d\u5931\u8d25: ' + (e && e.message ? e.message : e)]);
