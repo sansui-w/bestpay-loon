@@ -230,6 +230,13 @@ function __u8ToB64(u8) {
 }
 
 function __utf8Decode(u8) {
+  /* \u539f\u751f TextDecoder \u5728 JSC \u91cc\u662f C++ \u5b9e\u73b0\u7684\uff0c\u6bd4\u4e0b\u9762\u9010\u5b57\u8282\u5faa\u73af\u5feb\u4e00\u4e2a\u6570\u91cf\u7ea7\u3002
+   * 283KB \u7684 mpaas \u6a21\u5757\u5728 Node \u91cc\u624b\u5199\u5faa\u73af\u5c31\u8981 1.2 \u79d2\uff0cJSC \u91cc\u66f4\u6162 \u2014\u2014 \u4f18\u5148\u8d70\u539f\u751f\u3002 */
+  try {
+    if (typeof TextDecoder === 'function') {
+      return new TextDecoder('utf-8').decode(u8);
+    }
+  } catch (e) { /* \u843d\u5230\u624b\u5199\u5faa\u73af */ }
   var out = '', i = 0, n = u8.length, c, cp;
   while (i < n) {
     c = u8[i++];
@@ -549,16 +556,20 @@ function __resolveBase() {
 
 /* \u7b80\u6613\u5e76\u53d1\u6c60\uff1a\u6700\u591a n \u4e2a\u4efb\u52a1\u540c\u65f6\u8dd1 */
 function __pool(jobs, n) {
-  var out = new Array(jobs.length), idx = 0, running = 0, failed = false;
+  var out = new Array(jobs.length), idx = 0, running = 0, failed = false, done = 0;
   return new Promise(function (resolve, reject) {
     function step() {
       if (failed) return;
-      if (idx >= jobs.length && running === 0) return resolve(out);
+      if (idx >= jobs.length && running === 0) {
+        if (typeof __DBG_TRACE === 'function') __DBG_TRACE('\u6c60\u6392\u7a7a ' + done + '/' + jobs.length);
+        return resolve(out);
+      }
       while (running < n && idx < jobs.length) {
         (function (i) {
           running++; idx++;
           Promise.resolve().then(jobs[i]).then(function (v) {
-            out[i] = v; running--;
+            out[i] = v; running--; done++;
+            if (typeof __DBG_TRACE === 'function') __DBG_TRACE('\u5206\u5757 ' + done + '/' + jobs.length + ' \u5b8c\u6210');
             step();
           }, function (e) {
             if (!failed) { failed = true; reject(e); }
@@ -603,6 +614,7 @@ function __preloadAssets() {
         __ASSETS[k] = (k === 'mpaas') ? __utf8Decode(u8) : u8;
         __pushLog(['  \u8d44\u4ea7 ' + k + ': ' + chunks.length + '\u5757/' + total + 'B -> ' + u8.length + ' \u5b57\u8282']);
       });
+      if (typeof __DBG_TRACE === 'function') __DBG_TRACE('\u8d44\u4ea7\u88c5\u914d\u5b8c\u6210, \u5373\u5c06\u8fdb\u5165\u6b63\u6587');
     });
   });
 }
@@ -870,6 +882,8 @@ var __filename = '/loon/bestpay_task_scheduler.cjs';
   };
 })();
 
+var __DBG_TRACE = function (m) { try { __pushLog(['[DBG] ' + m]); } catch (e) {} };
+
 /* =================== \u8bca\u65ad\u63d2\u6869\uff08\u4ec5 --dbg \u7248\uff09 ===================
  * \u4f5c\u7528\uff1a\u628a\u201c\u5361\u4f4f\u201d\u53d8\u6210\u201c\u53ef\u89c1\u7684\u5361\u5728\u54ea\u4e00\u6b65\u201d\u3002
  *  - \u6bcf\u6761\u65e5\u5fd7\u52a0\u65f6\u95f4\u6233
@@ -965,8 +979,72 @@ var __filename = '/loon/bestpay_task_scheduler.cjs';
   } catch (e) {}
 })();
 
+/* ---------- \u8c03\u7528\u8ffd\u8e2a\u5668\uff1a\u5b9a\u4f4d\u201c\u65e0\u65e5\u5fd7\u7684\u5361\u70b9\u201d ----------
+ * \u5361\u70b9\u5728\u201c\u8d44\u4ea7\u52a0\u8f7d\u5b8c\u201d\u548c\u201c\u52a0\u8f7d wasm \u5f15\u64ce...\u201d\u4e4b\u95f4\uff0c\u90a3\u6bb5\u4e0d\u4ea7\u751f\u4efb\u4f55\u65e5\u5fd7\u3002
+ * \u628a require / readFileSync / eval / \u5b9a\u65f6\u5668 \u5168\u63d2\u6869\uff0c\u5361\u5728\u54ea\u4e00\u6b65\u4e00\u76ee\u4e86\u7136\u3002
+ * \u5173\u952e\u5224\u636e\uff1a\u82e5\u5fc3\u8df3\u4e5f\u505c\u4e86 \u2192 \u540c\u6b65\u6b7b\u5faa\u73af\uff1b\u82e5\u5fc3\u8df3\u7ee7\u7eed \u2192 \u5f02\u6b65\u7b49\u5f85\u3002 */
+(function () {
+  /* require */
+  try {
+    var _r = require;
+    require = function (name) {
+      __pushLog(['[DBG] require(' + name + ')']);
+      var m = _r(name);
+      __pushLog(['[DBG] require(' + name + ') \u8fd4\u56de']);
+      return m;
+    };
+  } catch (e) { __pushLog(['[DBG] require \u63d2\u6869\u5931\u8d25: ' + e]); }
+
+  /* fs.readFileSync \u2014\u2014 mpaas \u662f\u7528 eval(readFileSync(MOD)) \u52a0\u8f7d\u7684\uff0c\u8fd9\u91cc\u80fd\u770b\u5230 */
+  try {
+    var _rf = __FS.readFileSync;
+    __FS.readFileSync = function (p, enc) {
+      __pushLog(['[DBG] readFileSync(' + p + ')']);
+      var v = _rf.call(__FS, p, enc);
+      var kind = (v && v.constructor && v.constructor.name) ? v.constructor.name : typeof v;
+      __pushLog(['[DBG] readFileSync \u8fd4\u56de ' + kind + (v && v.length ? ' len=' + v.length : '')]);
+      return v;
+    };
+  } catch (e) { __pushLog(['[DBG] readFileSync \u63d2\u6869\u5931\u8d25: ' + e]); }
+
+  /* \u5168\u5c40 eval \u2014\u2014 \u5305\u4e00\u5c42\uff0c\u80fd\u770b\u51fa eval \u5927\u5b57\u7b26\u4e32\u7684\u5f00\u59cb/\u7ed3\u675f */
+  try {
+    var _ev = globalThis.eval;
+    if (typeof _ev === 'function') {
+      globalThis.eval = function (s) {
+        __pushLog(['[DBG] eval \u5f00\u59cb len=' + (s && s.length)]);
+        var r = _ev.apply(this, arguments);
+        __pushLog(['[DBG] eval \u7ed3\u675f']);
+        return r;
+      };
+    }
+  } catch (e) { __pushLog(['[DBG] eval \u63d2\u6869\u5931\u8d25: ' + e]); }
+
+  /* \u5b9a\u65f6\u5668 \u2014\u2014 \u770b\u6709\u6ca1\u6709\u957f\u5ef6\u65f6\u6216\u8f6e\u8be2 */
+  try {
+    var _st = setTimeout, _si = setInterval;
+    setTimeout = function (fn, ms) {
+      if (ms >= 1000) __pushLog(['[DBG] setTimeout ' + ms + 'ms']);
+      return _st.apply(this, arguments);
+    };
+    setInterval = function (fn, ms) {
+      __pushLog(['[DBG] setInterval ' + ms + 'ms']);
+      return _si.apply(this, arguments);
+    };
+  } catch (e) { __pushLog(['[DBG] \u5b9a\u65f6\u5668\u63d2\u6869\u5931\u8d25: ' + e]); }
+
+  /* XMLHttpRequest / fetch \u8c03\u7528\u70b9 */
+  try {
+    if (typeof XMLHttpRequest === 'function') {
+      var _X = XMLHttpRequest;
+      __pushLog(['[DBG] XMLHttpRequest \u5b58\u5728']);
+    }
+  } catch (e) {}
+})();
+
 /* ==== \u539f\u811a\u672c\u6b63\u6587\u5f00\u59cb\uff08\u9010\u5b57\u4fdd\u7559\uff09==== */
 Promise.resolve().then(function () { return __preloadAssets(); }).then(function () {
+if (typeof __DBG_TRACE === 'function') __DBG_TRACE('\u6b63\u6587\u5f00\u59cb\u6267\u884c');
 /**
  * \u7ffc\u652f\u4ed8 \u00b7 \u8d5a\u91d1\u5e01 \u5b9a\u65f6\u4efb\u52a1\u811a\u672c (Mac launchd)
  * \u8fdb\u7a0b\u5185\u52a0\u8f7d\u4e00\u6b21 wasm, \u5185\u8054\u8c03\u63a5\u53e3. \u8986\u76d6:
