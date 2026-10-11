@@ -880,7 +880,41 @@ var __ZLIB = {
 /* \u5b9e\u6d4b\u7ed3\u8bba\uff1a$httpClient \u5b57\u7b26\u4e32 body \u4f1a\u88ab UTF-8 \u6491\u7206\uff0cArrayBuffer \u4f1a\u88ab\u5b57\u7b26\u4e32\u5316\uff0c
  *           \u53ea\u6709\u539f\u751f fetch \u7684 Uint8Array body \u5b57\u8282\u7ea7\u4fdd\u771f \u2014\u2014 \u6545\u8d70 fetch\u3002      */
 var __HTTPS = (function () {
-  function request(opts, cb) {
+  /* \u5f52\u4e00\u5316\u53c2\u6570\uff1aNode \u7684 request/get \u652f\u6301 (url[, options][, callback]) \u4e0e (options[, callback])\u3002
+     \u6b63\u6587 sendBark() \u8c03\u7684\u662f https.get(url\u5b57\u7b26\u4e32, {headers}, cb) \u2014\u2014 \u4e4b\u524d\u57ab\u7247\u628a\u5b57\u7b26\u4e32\u5f53
+     options \u7528\uff0chost \u4e3a\u7a7a\uff0c\u8bf7\u6c42\u6253\u5230\u7a7a URL\u3002 */
+  function normalize(a, b, c) {
+    var url = null, opts = null, cb = null, i, x, k, args = [a, b, c];
+    for (i = 0; i < args.length; i++) {
+      x = args[i];
+      if (typeof x === 'function') cb = x;
+      else if (typeof x === 'string') url = x;
+      else if (x && typeof x === 'object') {
+        if (x.href && (x.protocol || x.hostname || x.host)) url = x.href;
+        else {
+          if (!opts) opts = {};
+          for (k in x) if (Object.prototype.hasOwnProperty.call(x, k)) opts[k] = x[k];
+        }
+      }
+    }
+    opts = opts || {};
+    if (url) {
+      try {
+        var p = new URL(url);
+        if (!opts.host && !opts.hostname) opts.hostname = p.hostname;
+        if (!opts.port) opts.port = p.port;
+        if (!opts.path) opts.path = (p.pathname || '/') + (p.search || '');
+        if (!opts.protocol) opts.protocol = p.protocol;
+        opts.__absolute = p.href;
+      } catch (e) {
+        try { if (typeof __pushLog === 'function') __pushLog(['  [https \u57ab\u7247] URL \u89e3\u6790\u5931\u8d25: ' + url]); } catch (_e) {}
+      }
+    }
+    return { opts: opts, cb: cb };
+  }
+
+  function request(a, b, c) {
+    var n = normalize(a, b, c), opts = n.opts, cb = n.cb;
     var chunks = [], errCb = null, toMs = 0, toFn = null, destroyed = false, timer = null;
 
     var req = {
@@ -898,7 +932,11 @@ var __HTTPS = (function () {
       }
       var host = opts.hostname || opts.host || '';
       var port = opts.port ? String(opts.port) : '';
-      var url = 'https://' + host + ((port && port !== '443') ? ':' + port : '') + (opts.path || '/');
+      var url = opts.__absolute || ('https://' + host + ((port && port !== '443') ? ':' + port : '') + (opts.path || '/'));
+      if (!opts.__absolute && !host) {
+        if (errCb) errCb(new Error('https \u57ab\u7247: \u65e0\u6548\u7684 URL/host: ' + String(a)));
+        return;
+      }
       var body = __concatU8(chunks);
       var headers = {}, src = opts.headers || {}, k;
       for (k in src) {
@@ -924,7 +962,7 @@ var __HTTPS = (function () {
               return res;
             },
           };
-          cb(res);
+          if (cb) cb(res);
         });
       }).catch(function (e) {
         if (timer) { __NATIVE_CT(timer); timer = null; }
@@ -936,7 +974,7 @@ var __HTTPS = (function () {
   }
   return {
     request: request,
-    get: function (o, cb) { o = o || {}; o.method = 'GET'; var r = request(o, cb); r.end(); return r; },
+    get: function (a, b, c) { var n = normalize(a, b, c); n.opts.method = 'GET'; var r = request(n.opts, n.cb); r.end(); return r; },
   };
 })();
 
@@ -1058,7 +1096,7 @@ var __DBG_TRACE = function (m) { try { __pushLog(['[DBG] ' + m]); } catch (e) {}
       return _pl(a);
     } catch (e) { return _pl(parts); }
   };
-  __pushLog(['[DBG] ===== build v11-gside (global \u4fa7\u8868\u4fee\u590d) =====']);
+  __pushLog(['[DBG] ===== build v12-https (https \u53c2\u6570\u5f52\u4e00\u5316) =====']);
   __pushLog(['[DBG] \u63d2\u6869\u751f\u6548, Loon=' + (typeof $loon !== 'undefined' ? $loon : '?')]);
 
   /* 2) \u5fc3\u8df3\uff1a\u7528 setTimeout \u9012\u5f52\uff0c\u6bd4 setInterval \u4fdd\u9669 */
