@@ -378,7 +378,62 @@ var __NATIVE_CI = (typeof clearInterval !== 'undefined') ? clearInterval : null;
   if (__NATIVE_CI) __G.clearInterval = function (t) { try { __NATIVE_CI(unwrap(t)); } catch (e) {} };
 })();
 
-/* URL \u2014\u2014 Loon \u82e5\u81ea\u5e26\u5c31\u7528\u81ea\u5e26 */
+var __NATIVE_URL = (typeof URL !== 'undefined' && URL) ? URL : null;   // \u4fdd\u7559\u539f\u751f, \u4f9b\u63a2\u9488\u6bd4\u5bf9
+
+/* ---------- \u00a74c URL \u515c\u5e95 ----------
+   \u539f\u811a\u672c\u7b2c 174 \u884c `new URL(opts.url)` \u89e3\u6790\u8bf7\u6c42\u5730\u5740\u3002Loon \u7684\u539f\u751f URL \u5bf9
+   \u76f8\u5bf9\u8def\u5f84/\u5f02\u5e38\u4e32\u4f1a\u629b TypeError: Invalid URL\uff0c\u76f4\u63a5\u6253\u65ad main()\u3002
+   \u8fd9\u91cc\u5305\u4e00\u5c42\uff1a\u5148\u8bd5\u539f\u751f\uff1b\u5931\u8d25\u5219\u6309 base \u81ea\u884c\u89e3\u6790\uff1b\u6c38\u4e0d\u629b\u3002 */
+(function () {
+  var __BASE = 'https://h5.bestpay.cn/';
+  var __RealURL = (typeof URL !== 'undefined' && URL) ? URL : null;
+  var __RE = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^\/:?#]*)(?::(\d+))?([^?#]*)(\?[^#]*)?(#.*)?$/;
+
+  function __abs(s, base) {
+    s = String(s == null ? '' : s);
+    if (__RE.test(s)) return s;
+    var origin = __BASE.replace(/\/+$/, '');
+    if (base) {
+      var bm = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^\/:?#]*)(?::(\d+))?/.exec(String(base));
+      if (bm) origin = bm[1] + '://' + bm[2] + (bm[3] ? ':' + bm[3] : '');
+    }
+    if (!s) return origin + '/';
+    if (s.charAt(0) === '/') return origin + s;
+    return origin + '/' + s;
+  }
+
+  function __parse(href, base) {
+    var s = __abs(href, base);
+    var m = __RE.exec(s) || __RE.exec(__BASE);
+    var p = m[3] || '';
+    return {
+      protocol: m[1] + ':', hostname: m[2], port: p, host: p ? m[2] + ':' + p : m[2],
+      pathname: m[4] || '/', search: m[5] || '', hash: m[6] || '', origin: m[1] + '://' + m[2] + (p ? ':' + p : ''),
+      href: m[1] + '://' + m[2] + (p ? ':' + p : '') + (m[4] || '/') + (m[5] || '') + (m[6] || ''),
+      searchParams: { get: function () { return null; }, has: function () { return false; } },
+      toString: function () { return this.href; }
+    };
+  }
+
+  function URLShim(href, base) {
+    var raw = String(href == null ? '' : href);
+    if (__RealURL) {
+      try { return (base !== undefined) ? new __RealURL(href, base) : new __RealURL(href); }
+      catch (e) { /* \u843d\u5230\u81ea\u5e26\u89e3\u6790 */ }
+    }
+    try { if (typeof __pushLog === 'function') __pushLog(['  [URL\u515c\u5e95] \u539f\u751f\u62d2\u7edd "' + raw.slice(0, 140) + '", \u6309 ' + __BASE + ' \u89e3\u6790']); } catch (_e) {}
+    return __parse(raw, base);
+  }
+  if (__RealURL) {
+    try { URLShim.createObjectURL = __RealURL.createObjectURL; } catch (e) {}
+    try { URLShim.revokeObjectURL = __RealURL.revokeObjectURL; } catch (e) {}
+    try { URLShim.canParse = __RealURL.canParse; } catch (e) {}
+  }
+  URLShim.__parseFallback = __parse;
+  __G.URL = URLShim;
+})();
+
+/* URL \u2014\u2014 Loon \u82e5\u5b8c\u5168\u6ca1\u81ea\u5e26\uff0c\u624d\u7528\u6700\u7b80\u7248\uff08\u4e0a\u9762\u7684\u515c\u5e95\u5df2\u8986\u76d6\u7edd\u5927\u591a\u6570\u60c5\u51b5\uff09 */
 if (typeof URL === 'undefined' || !URL) {
   __G.URL = function (href) {
     var m = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\/([^\/:?#]*)(?::(\d+))?([^?#]*)(\?[^#]*)?(#.*)?$/.exec(String(href));
