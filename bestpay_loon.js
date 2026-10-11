@@ -5,9 +5,9 @@
  *  whole run config is driven by this block + $persistentStore keys.
  *  Change a value here, save, then just run the task again. That's it.
  *
- *  assets : asset base URL. Leave it as-is normally. If a mirror is down,
- *           the script auto-falls-back through a built-in mirror list.
- *           Format: <base>/WBAES.wasm.gz etc.
+ *  assets : repo base URL (assets live under <base>/assets_parts/).
+ *           Leave it as-is normally -- if a mirror is down the script
+ *           auto-falls-back through a built-in mirror list.
  *  phones : mobile number(s), 11 digits.  e.g. ["13800138000"]
  *  mode   : "all"      run every saved account     <-- normal daily use
  *           "phone"    run only phones[0]
@@ -20,7 +20,7 @@
  *  bark   : optional Bark key/URL for push notifications
  * ======================================================================= */
 var BP_SETUP = {
-  assets: "https://fastly.jsdelivr.net/gh/sansui-w/bestpay-loon@main/assets",
+  assets: "https://fastly.jsdelivr.net/gh/sansui-w/bestpay-loon@main",
   phones: [],
   mode: "all",
   code: "",
@@ -63,19 +63,24 @@ var BP_SETUP = {
  * ------------------------------------------------------------------------- */
 var __REPO = 'sansui-w/bestpay-loon';
 var __BR = 'main';
+var __PART_DIR = 'assets_parts';
+/* \u6bcf\u4e2a\u8d44\u4ea7\u6309 64KB \u5207\u5757, \u5206\u5757\u540d = <\u6587\u4ef6\u540d>.p0/.p1/... \u653e\u5728 __PART_DIR \u4e0b */
 var __ASSET_FILE = {
-  gwcli: 'gwcli1-0-2.wasm.gz',
   wbaes: 'WBAES.wasm.gz',
   mpaas: 'mpaas_raw_mod.js.gz',
+  gwcli: 'gwcli1-0-2.wasm.gz',
 };
-/* \u955c\u50cf\u6e05\u5355\uff1a\u6309\u4f18\u5148\u7ea7\u987a\u5e8f\u5c1d\u8bd5\uff0c\u4efb\u4e00\u6210\u529f\u5373\u7528\u3002
- * jsdelivr \u662f\u771f CDN\uff08\u5e72\u51c0\u8def\u5f84\uff0c\u6700\u5feb\uff09\uff1b\u540e\u9762\u51e0\u4e2a\u662f raw \u900f\u4f20\u4ee3\u7406\u3002
+var __ASSET_PARTS = { wbaes: 1, mpaas: 2, gwcli: 8 };
+var __ASSET_GZ_SIZE = { wbaes: 16348, mpaas: 86451, gwcli: 459637 };
+/* \u955c\u50cf\u6e05\u5355\uff1a\u6309\u4f18\u5148\u7ea7\u987a\u5e8f\u5c1d\u8bd5\uff08\u5148\u62ff\u6700\u5c0f\u5206\u5757\u63a2\u6d3b\uff09\uff0c\u4efb\u4e00\u6210\u529f\u5373\u7528\u3002
  * \u914d\u7f6e\u5757\u91cc\u7684 assets \u82e5\u975e\u7a7a\uff0c\u4f1a\u88ab\u63d2\u5230\u6700\u524d\u9762\u4f18\u5148\u7528\u3002 */
 var __ASSET_MIRRORS = [
-  'https://fastly.jsdelivr.net/gh/' + __REPO + '@' + __BR + '/assets',
-  'https://gh-proxy.com/https://raw.githubusercontent.com/' + __REPO + '/' + __BR + '/assets',
-  'https://ghproxy.net/https://raw.githubusercontent.com/' + __REPO + '/' + __BR + '/assets',
-  'https://ghfast.top/https://raw.githubusercontent.com/' + __REPO + '/' + __BR + '/assets',
+  'https://fastly.jsdelivr.net/gh/' + __REPO + '@' + __BR,
+  'https://jsd.onmicrosoft.cn/gh/' + __REPO + '@' + __BR,
+  'https://gcore.jsdelivr.net/gh/' + __REPO + '@' + __BR,
+  'https://gh-proxy.com/https://raw.githubusercontent.com/' + __REPO + '/' + __BR,
+  'https://ghproxy.net/https://raw.githubusercontent.com/' + __REPO + '/' + __BR,
+  'https://ghfast.top/https://raw.githubusercontent.com/' + __REPO + '/' + __BR,
 ];
 var __ASSET_URLS = {};   // \u7531 \u00a77 \u586b\u5145: key -> [\u5019\u9009 URL...]
 
@@ -521,13 +526,13 @@ function __fetchOne(url, timeoutMs) {
   });
 }
 
-/* \u5148\u7528\u6700\u5c0f\u7684\u90a3\u4e2a\u8d44\u4ea7\u63a2\u6d3b\uff0c\u627e\u5230\u7b2c\u4e00\u4e2a\u53ef\u7528\u955c\u50cf\uff0c\u518d\u7528\u5b83\u62c9\u5168\u90e8\u8d44\u4ea7 */
+/* \u5148\u7528\u6700\u5c0f\u7684\u5206\u5757\u63a2\u6d3b\uff0c\u627e\u5230\u7b2c\u4e00\u4e2a\u53ef\u7528\u955c\u50cf\uff0c\u518d\u7528\u5b83\u62c9\u5168\u90e8\u5206\u5757 */
 function __resolveBase() {
   var i = 0;
   function attempt() {
     if (i >= __ASSET_BASES.length) return Promise.reject(new Error('\u6240\u6709\u955c\u50cf\u5747\u4e0d\u53ef\u7528'));
     var b = __ASSET_BASES[i++];
-    return __fetchOne(b + '/' + __ASSET_FILE.wbaes, 15000).then(function () {
+    return __fetchOne(b + '/' + __PART_DIR + '/' + __ASSET_FILE.wbaes + '.p0', 15000).then(function () {
       __pushLog(['  \u955c\u50cf\u53ef\u7528 [' + i + '/' + __ASSET_BASES.length + '] ' + b]);
       return b;
     }).catch(function (e) {
@@ -538,16 +543,33 @@ function __resolveBase() {
   return attempt();
 }
 
+/* \u5e76\u884c\u62c9\u4e00\u4e2a\u8d44\u4ea7\u7684\u5168\u90e8\u5206\u5757, \u62fc\u63a5, \u6821\u9a8c\u603b\u957f, \u89e3\u538b */
+function __loadAssetFrom(base, k) {
+  var n = __ASSET_PARTS[k], f = __ASSET_FILE[k];
+  var reqs = [];
+  for (var i = 0; i < n; i++) {
+    reqs.push(__fetchOne(base + '/' + __PART_DIR + '/' + f + '.p' + i, 25000));
+  }
+  return Promise.all(reqs).then(function (bufs) {
+    var total = 0, j;
+    for (j = 0; j < bufs.length; j++) total += bufs[j].byteLength;
+    if (total !== __ASSET_GZ_SIZE[k]) {
+      throw new Error('\u5206\u5757\u62fc\u63a5\u5927\u5c0f\u4e0d\u7b26 ' + k + ': ' + total + ' != ' + __ASSET_GZ_SIZE[k]);
+    }
+    var u8 = new Uint8Array(total), off = 0;
+    for (j = 0; j < bufs.length; j++) { u8.set(new Uint8Array(bufs[j]), off); off += bufs[j].byteLength; }
+    var gzSize = u8.length;
+    u8 = __INFLATE.maybe(u8);
+    __ASSETS[k] = (k === 'mpaas') ? __utf8Decode(u8) : u8;
+    __pushLog(['  \u8d44\u4ea7 ' + k + ': ' + n + '\u5757/' + gzSize + 'B -> ' + u8.length + ' \u5b57\u8282']);
+  });
+}
+
 function __preloadAssets() {
   return __resolveBase().then(function (base) {
-    return Promise.all(Object.keys(__ASSET_FILE).map(function (k) {
-      return __fetchOne(base + '/' + __ASSET_FILE[k], 30000).then(function (ab) {
-        var u8 = new Uint8Array(ab);
-        var size0 = u8.length;
-        u8 = __INFLATE.maybe(u8);
-        __ASSETS[k] = (k === 'mpaas') ? __utf8Decode(u8) : u8;
-        __pushLog(['  \u8d44\u4ea7 ' + k + ': ' + size0 + ' -> ' + u8.length + ' \u5b57\u8282']);
-      });
+    /* \u5c0f\u8d44\u4ea7\u5148\u5e76\u884c, \u5927\u8d44\u4ea7\u5e76\u53d1\u62c9: \u6bcf\u5757\u90fd\u5f88\u5c0f, \u8fde\u63a5\u6570\u6362\u901f\u5ea6 */
+    return Promise.all(Object.keys(__ASSET_PARTS).map(function (k) {
+      return __loadAssetFrom(base, k);
     }));
   });
 }
