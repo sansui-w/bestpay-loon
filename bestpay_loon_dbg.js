@@ -333,6 +333,51 @@ try {
   __NATIVE_CT(__stProbe);
 } catch (e) { /* \u515c\u5e95\uff1a\u4e0b\u9762\u8fd8\u6709\u4e00\u5c42 */ }
 
+/* ---------- \u00a74b \u5b9a\u65f6\u5668\u5305\u88c5 ----------
+   \u65e0\u8bba Loon \u539f\u751f setTimeout \u8fd4\u56de\u4ec0\u4e48(\u6570\u5b57/\u5bf9\u8c61/undefined)\uff0c\u5305\u88c5\u540e\u8fd4\u56de\u503c\u6c38\u8fdc\u5e26
+   .unref()/.ref()/.close()\u3002\u539f\u811a\u672c\u5bf9\u770b\u95e8\u72d7\u5b9a\u65f6\u5668\u8c03\u4e86 .unref()\uff0c
+   JSC \u8fd4\u56de undefined \u65f6\u4f1a\u629b TypeError\uff0c\u4e14\u88ab Promise \u94fe\u9759\u9ed8\u541e\u6389\u3002 */
+var __NATIVE_SI = (typeof setInterval !== 'undefined') ? setInterval : null;
+var __NATIVE_CI = (typeof clearInterval !== 'undefined') ? clearInterval : null;
+(function () {
+  function wrapTimer(nativeId, clearFn) {
+    var o = {
+      _id: nativeId,
+      unref: function () { return o; },
+      ref: function () { return o; },
+      hasRef: function () { return true; },
+      refresh: function () { return o; },
+      close: function () { try { if (clearFn && nativeId != null) clearFn(nativeId); } catch (e) {} }
+    };
+    return o;
+  }
+  function unwrap(t) {
+    return (t && typeof t === 'object' && t._id !== undefined) ? t._id : t;
+  }
+  if (__NATIVE_ST) {
+    __G.setTimeout = function (fn, ms) {
+      var rest = Array.prototype.slice.call(arguments, 2);
+      var id = __NATIVE_ST(function () {
+        try { fn.apply(null, rest); }
+        catch (e) { try { if (typeof __pushLog === 'function') __pushLog(['[timer \u56de\u8c03\u5f02\u5e38] ' + (e && e.message ? e.message : e)]); } catch (_e) {} }
+      }, ms);
+      return wrapTimer(id, __NATIVE_CT);
+    };
+  }
+  if (__NATIVE_SI) {
+    __G.setInterval = function (fn, ms) {
+      var rest = Array.prototype.slice.call(arguments, 2);
+      var id = __NATIVE_SI(function () {
+        try { fn.apply(null, rest); }
+        catch (e) { try { if (typeof __pushLog === 'function') __pushLog(['[interval \u56de\u8c03\u5f02\u5e38] ' + (e && e.message ? e.message : e)]); } catch (_e) {} }
+      }, ms);
+      return wrapTimer(id, __NATIVE_CI);
+    };
+  }
+  if (__NATIVE_CT) __G.clearTimeout = function (t) { try { __NATIVE_CT(unwrap(t)); } catch (e) {} };
+  if (__NATIVE_CI) __G.clearInterval = function (t) { try { __NATIVE_CI(unwrap(t)); } catch (e) {} };
+})();
+
 /* URL \u2014\u2014 Loon \u82e5\u81ea\u5e26\u5c31\u7528\u81ea\u5e26 */
 if (typeof URL === 'undefined' || !URL) {
   __G.URL = function (href) {
@@ -923,7 +968,7 @@ var __DBG_TRACE = function (m) { try { __pushLog(['[DBG] ' + m]); } catch (e) {}
       return _pl(a);
     } catch (e) { return _pl(parts); }
   };
-  __pushLog(['[DBG] ===== build v7-surgical (7\u63a2\u9488\u7248) =====']);
+  __pushLog(['[DBG] ===== build v8-timerfix (\u5b9a\u65f6\u5668\u57ab\u7247\u4fee\u590d) =====']);
   __pushLog(['[DBG] \u63d2\u6869\u751f\u6548, Loon=' + (typeof $loon !== 'undefined' ? $loon : '?')]);
 
   /* 2) \u5fc3\u8df3\uff1a\u7528 setTimeout \u9012\u5f52\uff0c\u6bd4 setInterval \u4fdd\u9669 */
@@ -2018,8 +2063,9 @@ if (typeof __DBG_TRACE === "function") __DBG_TRACE("\u9876\u5c42: \u5373\u5c06\u
 
 if (typeof __DBG_TRACE === 'function') __DBG_TRACE('\u6b63\u6587\u9876\u5c42\u6267\u884c\u5b8c\u6bd5(\u542b main \u8c03\u7528)');
 
-}, function (e) {
-  __pushLog(['\u8d44\u4ea7\u9884\u8f7d\u5931\u8d25: ' + (e && e.message ? e.message : e)]);
+}).catch(function (e) {
+  __pushLog(['\u6b63\u6587/\u8d44\u4ea7\u5f02\u5e38: ' + (e && e.message ? e.message : e)
+    + ' || ' + (e && e.stack ? String(e.stack).split('\n').slice(0, 4).join(' ~ ') : '(\u65e0\u5806\u6808)')]);
   __finish();
 });
 /* ==== \u539f\u811a\u672c\u6b63\u6587\u7ed3\u675f ==== */
