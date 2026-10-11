@@ -1854,9 +1854,9 @@ const _watchdog = setTimeout(() => {
   log(`[watchdog] \u603b\u8fd0\u884c\u8d85 ${GLOBAL_BUDGET_MS / 60000} \u5206\u949f, \u5f3a\u5236\u9000\u51fa`);
   process.exit(0);
 }, GLOBAL_BUDGET_MS);
-_watchdog.unref();
+_watchdog.unref(); if (typeof __DBG_TRACE === "function") __DBG_TRACE("\u9876\u5c42: watchdog\u5df2\u8bbe(774\u884c\u540e)");
 
-async function main() {
+async function main() { if (typeof __DBG_TRACE === "function") __DBG_TRACE("main() \u8fdb\u5165");
   const args = process.argv.slice(2);
   const argVal = (k) => { const i = args.indexOf(k); return i >= 0 ? String(args[i + 1] || '') : ''; };
   const rawArgPhone = argVal('--phone');
@@ -1864,7 +1864,7 @@ async function main() {
   const argPhone = normalizePhone(rawArgPhone);
   if (rawArgPhone && !argPhone) { log('\u624b\u673a\u53f7\u65e0\u6548: ' + rawArgPhone + ' (\u9700 11 \u4f4d: 1xxxxxxxxxx)'); return; }
   const doLogin = args.includes('--login') || args.includes('--send-sms');
-  const all = readSessionsFile();
+  const all = readSessionsFile(); if (typeof __DBG_TRACE === "function") __DBG_TRACE("main: sessions\u5df2\u8bfb, \u8d26\u53f7\u6570=" + Object.keys(all).length);
   const phones = args.includes('--all') ? Object.keys(all) : [];
   if (!args.includes('--all')) {
     const p = argPhone || envPhone;
@@ -2013,7 +2013,7 @@ async function main() {
   log('bark \u901a\u77e5\u5df2\u53d1\u9001');
 }
 
-main().catch((e) => { log('FATAL:', e); process.exit(1); }).then(() => process.exit(0));
+if (typeof __DBG_TRACE === "function") __DBG_TRACE("\u9876\u5c42: \u5373\u5c06\u8c03\u7528 main()"); main().catch((e) => { try { __pushLog(["[DBG] main FATAL: " + (e && e.message ? e.message : e) + " || " + (e && e.stack ? String(e.stack).split("\n").slice(0, 3).join(" ~ ") : "")]); } catch (_e) {} log('FATAL:', e); process.exit(1); }).then(() => process.exit(0));
 
 if (typeof __DBG_TRACE === 'function') __DBG_TRACE('\u6b63\u6587\u9876\u5c42\u6267\u884c\u5b8c\u6bd5(\u542b main \u8c03\u7528)');
 
