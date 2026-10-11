@@ -230,6 +230,13 @@ function __u8ToB64(u8) {
 }
 
 function __utf8Decode(u8) {
+  /* \u539f\u751f TextDecoder \u5728 JSC \u91cc\u662f C++ \u5b9e\u73b0\u7684\uff0c\u6bd4\u4e0b\u9762\u9010\u5b57\u8282\u5faa\u73af\u5feb\u4e00\u4e2a\u6570\u91cf\u7ea7\u3002
+   * 283KB \u7684 mpaas \u6a21\u5757\u5728 Node \u91cc\u624b\u5199\u5faa\u73af\u5c31\u8981 1.2 \u79d2\uff0cJSC \u91cc\u66f4\u6162 \u2014\u2014 \u4f18\u5148\u8d70\u539f\u751f\u3002 */
+  try {
+    if (typeof TextDecoder === 'function') {
+      return new TextDecoder('utf-8').decode(u8);
+    }
+  } catch (e) { /* \u843d\u5230\u624b\u5199\u5faa\u73af */ }
   var out = '', i = 0, n = u8.length, c, cp;
   while (i < n) {
     c = u8[i++];
@@ -549,16 +556,20 @@ function __resolveBase() {
 
 /* \u7b80\u6613\u5e76\u53d1\u6c60\uff1a\u6700\u591a n \u4e2a\u4efb\u52a1\u540c\u65f6\u8dd1 */
 function __pool(jobs, n) {
-  var out = new Array(jobs.length), idx = 0, running = 0, failed = false;
+  var out = new Array(jobs.length), idx = 0, running = 0, failed = false, done = 0;
   return new Promise(function (resolve, reject) {
     function step() {
       if (failed) return;
-      if (idx >= jobs.length && running === 0) return resolve(out);
+      if (idx >= jobs.length && running === 0) {
+        if (typeof __DBG_TRACE === 'function') __DBG_TRACE('\u6c60\u6392\u7a7a ' + done + '/' + jobs.length);
+        return resolve(out);
+      }
       while (running < n && idx < jobs.length) {
         (function (i) {
           running++; idx++;
           Promise.resolve().then(jobs[i]).then(function (v) {
-            out[i] = v; running--;
+            out[i] = v; running--; done++;
+            if (typeof __DBG_TRACE === 'function') __DBG_TRACE('\u5206\u5757 ' + done + '/' + jobs.length + ' \u5b8c\u6210');
             step();
           }, function (e) {
             if (!failed) { failed = true; reject(e); }
@@ -603,6 +614,7 @@ function __preloadAssets() {
         __ASSETS[k] = (k === 'mpaas') ? __utf8Decode(u8) : u8;
         __pushLog(['  \u8d44\u4ea7 ' + k + ': ' + chunks.length + '\u5757/' + total + 'B -> ' + u8.length + ' \u5b57\u8282']);
       });
+      if (typeof __DBG_TRACE === 'function') __DBG_TRACE('\u8d44\u4ea7\u88c5\u914d\u5b8c\u6210, \u5373\u5c06\u8fdb\u5165\u6b63\u6587');
     });
   });
 }
@@ -872,6 +884,7 @@ var __filename = '/loon/bestpay_task_scheduler.cjs';
 
 /* ==== \u539f\u811a\u672c\u6b63\u6587\u5f00\u59cb\uff08\u9010\u5b57\u4fdd\u7559\uff09==== */
 Promise.resolve().then(function () { return __preloadAssets(); }).then(function () {
+if (typeof __DBG_TRACE === 'function') __DBG_TRACE('\u6b63\u6587\u5f00\u59cb\u6267\u884c');
 /**
  * \u7ffc\u652f\u4ed8 \u00b7 \u8d5a\u91d1\u5e01 \u5b9a\u65f6\u4efb\u52a1\u811a\u672c (Mac launchd)
  * \u8fdb\u7a0b\u5185\u52a0\u8f7d\u4e00\u6b21 wasm, \u5185\u8054\u8c03\u63a5\u53e3. \u8986\u76d6:
