@@ -92,7 +92,29 @@ var __ASSET_URLS = {};   // \u7531 \u00a77 \u586b\u5145: key -> [\u5019\u9009 UR
 var __G = (typeof globalThis !== 'undefined') ? globalThis
          : (typeof global !== 'undefined') ? global
          : this;
-var global = __G;
+/* global \u7528 Proxy \u5305\u4e00\u5c42\u3002
+   \u6b63\u6587\u4f1a\u7ed9 global.location / global.navigator / global.document \u7b49\u8d4b\u503c\uff0c\u800c Loon \u7684
+   \u5168\u5c40\u5bf9\u8c61\u4e0a\u8fd9\u4e9b\u662f\u539f\u751f accessor \u2014\u2014 \u5176 setter \u4f1a\u628a\u8d4b\u503c\u5f53 URL \u89e3\u6790\uff0c\u8d4b\u4e00\u4e2a\u5bf9\u8c61\u5c31\u4f1a\u629b
+   "Invalid URL"\uff0c\u76f4\u63a5\u6253\u65ad loadWasmEnv()\u3002Proxy \u7684 set \u9677\u9631\u6539\u7528 defineProperty \u5f3a\u5236
+   \u5199\u6210\u53ef\u5199\u6570\u636e\u5c5e\u6027\uff0c\u7ed5\u8fc7\u539f\u751f setter\uff1b\u5373\u4fbf defineProperty \u5931\u8d25\u4e5f\u7edd\u4e0d\u629b\u9519\u3002 */
+var global = (typeof Proxy === 'function') ? new Proxy(__G, {
+  set: function (t, k, v) {
+    try {
+      Object.defineProperty(t, k, { value: v, writable: true, enumerable: true, configurable: true });
+      return true;
+    } catch (e) {
+      try { t[k] = v; } catch (e2) {
+        try { if (typeof __pushLog === 'function') __pushLog(['  [global \u515c\u5e95] ' + String(k) + ' \u8d4b\u503c\u5931\u8d25: ' + (e2 && e2.message)]); } catch (_e) {}
+      }
+      return true;
+    }
+  },
+  get: function (t, k) { return t[k]; },
+  has: function (t, k) { return k in t; },
+  deleteProperty: function (t, k) { try { delete t[k]; } catch (e) {} return true; },
+  ownKeys: function (t) { return Reflect.ownKeys(t); },
+  getOwnPropertyDescriptor: function (t, k) { return Object.getOwnPropertyDescriptor(t, k); }
+}) : __G;
 
 /* ---------- \u00a71c \u6781\u7b80 DEFLATE \u89e3\u538b\uff08gzip / zlib / raw\uff09----------
  * \u7528\u9014\uff1a\u8d44\u4ea7\u4ece CDN \u62c9\u56de\u65f6\u53ef\u80fd\u88ab\u670d\u52a1\u7aef\u538b\u7f29\uff0c\u800c Loon \u7684 fetch \u672a\u5fc5\u81ea\u52a8\u89e3\u538b\u3002
@@ -1023,7 +1045,7 @@ var __DBG_TRACE = function (m) { try { __pushLog(['[DBG] ' + m]); } catch (e) {}
       return _pl(a);
     } catch (e) { return _pl(parts); }
   };
-  __pushLog(['[DBG] ===== build v9-urlfix (URL \u515c\u5e95\u4fee\u590d) =====']);
+  __pushLog(['[DBG] ===== build v10-globalfix (global Proxy \u4fee\u590d) =====']);
   __pushLog(['[DBG] \u63d2\u6869\u751f\u6548, Loon=' + (typeof $loon !== 'undefined' ? $loon : '?')]);
 
   /* 2) \u5fc3\u8df3\uff1a\u7528 setTimeout \u9012\u5f52\uff0c\u6bd4 setInterval \u4fdd\u9669 */
@@ -1194,6 +1216,19 @@ var __DBG_TRACE = function (m) { try { __pushLog(['[DBG] ' + m]); } catch (e) {}
     __G.URL = Traced;
   })();
 
+  /* 10) \u5168\u5c40\u5c5e\u6027 accessor \u4f53\u68c0\uff08Loon \u4e0a location/navigator/document \u662f\u5426\u539f\u751f accessor\uff09 */
+  try {
+    var __risky = ['location', 'navigator', 'document', 'self', 'window', 'fetch', 'WebAssembly'];
+    var __lines = [];
+    for (var __i = 0; __i < __risky.length; __i++) {
+      var __k = __risky[__i], __d = Object.getOwnPropertyDescriptor(__G, __k);
+      if (!__d) __lines.push(__k + '=\u65e0');
+      else if (__d.get || __d.set) __lines.push(__k + '=accessor(' + (__d.set ? '\u6709setter' : '\u53ea\u8bfb') + ',cfg=' + __d.configurable + ')');
+      else __lines.push(__k + '=\u6570\u636e(w=' + __d.writable + ')');
+    }
+    __pushLog(['[DBG] \u5168\u5c40\u5c5e\u6027: ' + __lines.join(' ')]);
+  } catch (_e) {}
+
   /* 8) existsSync \u63d2\u6869\uff08readSessionsFile \u5148\u8c03\u7684\u662f\u5b83\uff09 */
   try {
     var _ex = __FS.existsSync;
@@ -1321,16 +1356,16 @@ function sendBark(title, body) {
 function loadWasmEnv() {
   const wasmBuf = fs.readFileSync(WASM); __DBG_TRACE("LWE1 wasmBuf ok");
   const wasmAB = wasmBuf.buffer.slice(wasmBuf.byteOffset, wasmBuf.byteOffset + wasmBuf.byteLength);
-  global.self = global; global.window = global; __DBG_TRACE("LWE2 globals ok");
-  global.document = {
+  global.self = global; global.window = global; __DBG_TRACE("LWE2a self/window ok"); __DBG_TRACE("LWE2 globals ok");
+  __DBG_TRACE("LWE2b \u5373\u5c06\u8bbe document"); global.document = {
     currentScript: null, getElementsByTagName: () => [],
     createElement: () => ({ style: {}, setAttribute() {}, appendChild() {}, remove() {} }),
   };
-  global.navigator = {
+  __DBG_TRACE("LWE2c \u5373\u5c06\u8bbe navigator"); global.navigator = {
     userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.75 NetType/WIFI Language/zh_CN',
   };
-  global.location = { href: `https://servicewechat.com/${WXID}/382/page-frame.html`, pathname: '/', search: '', hash: '' };
-  global.__g = global;
+  __DBG_TRACE("LWE2d \u5373\u5c06\u8bbe location"); global.location = { href: `https://servicewechat.com/${WXID}/382/page-frame.html`, pathname: '/', search: '', hash: '' };
+  __DBG_TRACE("LWE2e document/navigator/location ok"); global.__g = global;
   global.__vd_version_info__ = { version: '3.0.0' };
   global.__wxAppCode__ = {}; global.__wxRoute = ''; global.__wxRouteBegin = false; global.__wxAppCurrentFile__ = '';
   global.$gwx0_XC_0 = () => () => {};
