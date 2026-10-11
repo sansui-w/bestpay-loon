@@ -93,27 +93,40 @@ var __G = (typeof globalThis !== 'undefined') ? globalThis
          : (typeof global !== 'undefined') ? global
          : this;
 /* global \u7528 Proxy \u5305\u4e00\u5c42\u3002
-   \u6b63\u6587\u4f1a\u7ed9 global.location / global.navigator / global.document \u7b49\u8d4b\u503c\uff0c\u800c Loon \u7684
-   \u5168\u5c40\u5bf9\u8c61\u4e0a\u8fd9\u4e9b\u662f\u539f\u751f accessor \u2014\u2014 \u5176 setter \u4f1a\u628a\u8d4b\u503c\u5f53 URL \u89e3\u6790\uff0c\u8d4b\u4e00\u4e2a\u5bf9\u8c61\u5c31\u4f1a\u629b
-   "Invalid URL"\uff0c\u76f4\u63a5\u6253\u65ad loadWasmEnv()\u3002Proxy \u7684 set \u9677\u9631\u6539\u7528 defineProperty \u5f3a\u5236
-   \u5199\u6210\u53ef\u5199\u6570\u636e\u5c5e\u6027\uff0c\u7ed5\u8fc7\u539f\u751f setter\uff1b\u5373\u4fbf defineProperty \u5931\u8d25\u4e5f\u7edd\u4e0d\u629b\u9519\u3002 */
+   \u6b63\u6587\u4f1a\u7ed9 global.location / window / document / navigator / self \u7b49\u8d4b\u503c\uff0c\u800c Loon \u7684
+   \u5168\u5c40\u5bf9\u8c61\u4e0a\u8fd9\u4e9b\u662f\u539f\u751f accessor\uff08\u8bbe\u5907\u5b9e\u6d4b\uff09\uff1a
+     location : \u6709 setter, \u4e0d\u53ef\u914d\u7f6e \u2192 \u539f\u751f setter \u628a\u5bf9\u8c61\u5f53 URL \u89e3\u6790\u5e76\u629b\u9519\uff08\u5d29\u6e83\u6839\u6e90\uff09
+     window   : \u53ea\u8bfb, \u4e0d\u53ef\u914d\u7f6e      \u2192 \u65e0\u6cd5\u771f\u6b63\u5199\u5165
+     document : \u53ea\u8bfb, \u4e0d\u53ef\u914d\u7f6e      \u2192 \u65e0\u6cd5\u771f\u6b63\u5199\u5165
+     navigator: \u53ea\u8bfb, \u53ef\u914d\u7f6e        \u2192 \u53ef\u6b63\u5e38\u6539\u5199
+     self     : \u6709 setter, \u53ef\u914d\u7f6e   \u2192 \u53ef\u6b63\u5e38\u6539\u5199
+   Proxy \u7b56\u7565\uff1a
+     1) \u76ee\u6807\u5c5e\u6027\u53ef\u914d\u7f6e\u6216\u53ef\u5199 \u2192 defineProperty \u5f3a\u5236\u5199\u6210\u53ef\u5199\u6570\u636e\u5c5e\u6027\uff08\u7ed5\u8fc7\u539f\u751f setter\uff09
+     2) \u76ee\u6807\u5c5e\u6027\u4e0d\u53ef\u914d\u7f6e     \u2192 \u503c\u5b58\u4fa7\u8868 __gset\uff0cget \u65f6\u4f18\u5148\u8fd4\u56de\u4fa7\u8868\u503c\uff1b
+        \u82e5\u8be5\u5c5e\u6027\u6ca1\u6709 setter\uff0c\u6309 Proxy \u4e0d\u53d8\u5f0f set \u5fc5\u987b\u8fd4\u56de false
+        \uff08\u6b63\u6587\u65e0 'use strict'\uff0c\u662f sloppy \u6a21\u5f0f\uff0c\u8d4b\u503c\u9759\u9ed8\u5931\u8d25\u3001\u4e0d\u4f1a\u629b\u9519\uff09
+   \u7ed3\u679c\uff1a\u6b63\u6587\u5bf9\u5168\u5c40\u7684\u6bcf\u6b21\u8d4b\u503c\u90fd\u4e0d\u518d\u5d29\uff0c\u4e14 global.xxx \u8bfb\u5230\u7684\u4ecd\u662f\u6b63\u6587\u8bbe\u7684\u503c\u3002 */
+var __gset = {};
 var global = (typeof Proxy === 'function') ? new Proxy(__G, {
   set: function (t, k, v) {
-    try {
-      Object.defineProperty(t, k, { value: v, writable: true, enumerable: true, configurable: true });
-      return true;
-    } catch (e) {
-      try { t[k] = v; } catch (e2) {
-        try { if (typeof __pushLog === 'function') __pushLog(['  [global \u515c\u5e95] ' + String(k) + ' \u8d4b\u503c\u5931\u8d25: ' + (e2 && e2.message)]); } catch (_e) {}
+    var d = null;
+    try { d = Object.getOwnPropertyDescriptor(t, k); } catch (e) {}
+    if (!d || d.configurable || d.writable) {
+      try {
+        Object.defineProperty(t, k, { value: v, writable: true, enumerable: true, configurable: true });
+        return true;
+      } catch (e) {
+        try { t[k] = v; return true; }
+        catch (e2) { __gset[k] = v; return false; }
       }
-      return true;
     }
+    __gset[k] = v;
+    try { if (typeof __pushLog === 'function') __pushLog(['  [global \u4fa7\u8868] ' + String(k) + ' \u4e0d\u53ef\u914d\u7f6e, \u503c\u5b58\u4fa7\u8868']); } catch (_e) {}
+    return !!d.set;
   },
-  get: function (t, k) { return t[k]; },
-  has: function (t, k) { return k in t; },
-  deleteProperty: function (t, k) { try { delete t[k]; } catch (e) {} return true; },
-  ownKeys: function (t) { return Reflect.ownKeys(t); },
-  getOwnPropertyDescriptor: function (t, k) { return Object.getOwnPropertyDescriptor(t, k); }
+  get: function (t, k) { return (k in __gset) ? __gset[k] : t[k]; },
+  has: function (t, k) { return (k in __gset) || (k in t); },
+  deleteProperty: function (t, k) { try { delete __gset[k]; } catch (e) {} try { delete t[k]; } catch (e) {} return true; }
 }) : __G;
 
 /* ---------- \u00a71c \u6781\u7b80 DEFLATE \u89e3\u538b\uff08gzip / zlib / raw\uff09----------
@@ -1045,7 +1058,7 @@ var __DBG_TRACE = function (m) { try { __pushLog(['[DBG] ' + m]); } catch (e) {}
       return _pl(a);
     } catch (e) { return _pl(parts); }
   };
-  __pushLog(['[DBG] ===== build v10-globalfix (global Proxy \u4fee\u590d) =====']);
+  __pushLog(['[DBG] ===== build v11-gside (global \u4fa7\u8868\u4fee\u590d) =====']);
   __pushLog(['[DBG] \u63d2\u6869\u751f\u6548, Loon=' + (typeof $loon !== 'undefined' ? $loon : '?')]);
 
   /* 2) \u5fc3\u8df3\uff1a\u7528 setTimeout \u9012\u5f52\uff0c\u6bd4 setInterval \u4fdd\u9669 */
