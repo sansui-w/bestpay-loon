@@ -1,0 +1,14 @@
+{
+ "WBAES.wasm.gz": {
+  "parts": 1,
+  "size": 16348
+ },
+ "gwcli1-0-2.wasm.gz": {
+  "parts": 8,
+  "size": 459637
+ },
+ "mpaas_raw_mod.js.gz": {
+  "parts": 2,
+  "size": 86451
+ }
+}
