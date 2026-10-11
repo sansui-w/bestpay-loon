@@ -5,7 +5,9 @@
  *  whole run config is driven by this block + $persistentStore keys.
  *  Change a value here, save, then just run the task again. That's it.
  *
- *  assets : asset base URL (3 wasm/js files are pulled from here)
+ *  assets : asset base URL. Leave it as-is normally. If a mirror is down,
+ *           the script auto-falls-back through a built-in mirror list.
+ *           Format: <base>/WBAES.wasm.gz etc.
  *  phones : mobile number(s), 11 digits.  e.g. ["13800138000"]
  *  mode   : "all"      run every saved account     <-- normal daily use
  *           "phone"    run only phones[0]
@@ -18,7 +20,7 @@
  *  bark   : optional Bark key/URL for push notifications
  * ======================================================================= */
 var BP_SETUP = {
-  assets: "https://ghproxy.net/https://raw.githubusercontent.com/sansui-w/bestpay-loon/main/assets",
+  assets: "https://fastly.jsdelivr.net/gh/sansui-w/bestpay-loon@main/assets",
   phones: [],
   mode: "all",
   code: "",
@@ -59,11 +61,23 @@ var BP_SETUP = {
  * \u82e5\u8fd4\u56de\u4f53\u662f gzip/zlib \u538b\u7f29\u683c\u5f0f\uff0c\u81ea\u52a8\u89e3\u538b\uff08\u89c1 \u00a71c\uff09\uff1b\u672a\u538b\u7f29\u539f\u6587\u4ef6\u4e5f\u80fd\u76f4\u63a5\u7528\u3002
  * \u5efa\u8bae\uff1a\u628a gzip \u540e\u7684 .gz \u6587\u4ef6\u4f20\u4e0a\u53bb\uff0c\u7701\u6d41\u91cf\u3001\u4e0b\u8f7d\u5feb\u3002
  * ------------------------------------------------------------------------- */
-var __ASSET_URLS = {
-  gwcli: '%%URL_GWCLI%%',
-  wbaes: '%%URL_WBAES%%',
-  mpaas: '%%URL_MPAAS%%',
+var __REPO = 'sansui-w/bestpay-loon';
+var __BR = 'main';
+var __ASSET_FILE = {
+  gwcli: 'gwcli1-0-2.wasm.gz',
+  wbaes: 'WBAES.wasm.gz',
+  mpaas: 'mpaas_raw_mod.js.gz',
 };
+/* \u955c\u50cf\u6e05\u5355\uff1a\u6309\u4f18\u5148\u7ea7\u987a\u5e8f\u5c1d\u8bd5\uff0c\u4efb\u4e00\u6210\u529f\u5373\u7528\u3002
+ * jsdelivr \u662f\u771f CDN\uff08\u5e72\u51c0\u8def\u5f84\uff0c\u6700\u5feb\uff09\uff1b\u540e\u9762\u51e0\u4e2a\u662f raw \u900f\u4f20\u4ee3\u7406\u3002
+ * \u914d\u7f6e\u5757\u91cc\u7684 assets \u82e5\u975e\u7a7a\uff0c\u4f1a\u88ab\u63d2\u5230\u6700\u524d\u9762\u4f18\u5148\u7528\u3002 */
+var __ASSET_MIRRORS = [
+  'https://fastly.jsdelivr.net/gh/' + __REPO + '@' + __BR + '/assets',
+  'https://gh-proxy.com/https://raw.githubusercontent.com/' + __REPO + '/' + __BR + '/assets',
+  'https://ghproxy.net/https://raw.githubusercontent.com/' + __REPO + '/' + __BR + '/assets',
+  'https://ghfast.top/https://raw.githubusercontent.com/' + __REPO + '/' + __BR + '/assets',
+];
+var __ASSET_URLS = {};   // \u7531 \u00a77 \u586b\u5145: key -> [\u5019\u9009 URL...]
 
 /* ---------- \u00a72  \u5b57\u8282 / \u7f16\u7801\u5de5\u5177 ------------------------------------------ */
 var __G = (typeof globalThis !== 'undefined') ? globalThis
@@ -435,18 +449,17 @@ var __CONF = (function () {
   return c;
 })();
 
-/* \u8d44\u4ea7\u57fa\u5740: \u914d\u7f6e\u5757/\u5b58\u50a8\u952e -> __ASSET_URLS */
-(function () {
+/* \u8d44\u4ea7\u57fa\u5740\u6e05\u5355: \u914d\u7f6e\u5757/\u5b58\u50a8\u952e\u91cc\u7684 base \u4f18\u5148, \u5176\u540e\u63a5\u5185\u7f6e\u955c\u50cf */
+var __ASSET_BASES = (function () {
   var base = String(__CONF.assets || '').replace(/\/+$/, '');
   if (!base) { try { base = String(__STORE.get('bp_assets') || '').replace(/\/+$/, ''); } catch (e) {} }
-  if (base) {
+  var out = [];
+  if (base && base.indexOf('%%') !== 0) {
+    out.push(base);
     try { __STORE.set('bp_assets', base); } catch (e) {}
-    __ASSET_URLS = {
-      gwcli: base + '/gwcli1-0-2.wasm.gz',
-      wbaes: base + '/WBAES.wasm.gz',
-      mpaas: base + '/mpaas_raw_mod.js.gz',
-    };
   }
+  __ASSET_MIRRORS.forEach(function (m) { if (out.indexOf(m) < 0) out.push(m); });
+  return out;
 })();
 
 /* \u914d\u7f6e -> process.argv. \u539f\u811a\u672c\u4f53\u7167\u65e7\u89e3\u6790 argv, \u4e00\u884c\u90fd\u4e0d\u7528\u52a8. */
@@ -489,28 +502,54 @@ var __ARGV = (function () {
 /* ---------- \u00a78  \u8d44\u4ea7\uff1a\u9884\u8f7d + \u7f13\u5b58 ---------------------------------------- */
 var __ASSETS = {};
 
-function __preloadAssets() {
-  var keys = Object.keys(__ASSET_URLS);
-  var pending = [];
-  keys.forEach(function (k) {
-    var url = __ASSET_URLS[k];
-    if (!url || url.indexOf('%%') === 0) {
-      throw new Error('\u8d44\u4ea7\u5730\u5740\u672a\u914d\u7f6e: ' + k);
-    }
-    pending.push(
-      __NATIVE_FETCH(url, { cache: 'no-store' }).then(function (r) {
-        if (!r || !r.ok) throw new Error('\u8d44\u4ea7\u62c9\u53d6\u5931\u8d25 ' + k + ' HTTP ' + (r && r.status));
+/* \u5355\u4e2a URL \u5e26\u8d85\u65f6\u7684 fetch\uff1b\u8d85\u65f6/\u5931\u8d25\u90fd reject\uff0c\u4ea4\u7ed9\u4e0a\u5c42\u6362\u955c\u50cf */
+function __fetchOne(url, timeoutMs) {
+  return new Promise(function (resolve, reject) {
+    var done = false;
+    var timer = setTimeout(function () {
+      if (done) return; done = true;
+      reject(new Error('\u8d85\u65f6' + timeoutMs + 'ms'));
+    }, timeoutMs);
+    Promise.resolve()
+      .then(function () { return __NATIVE_FETCH(url, { cache: 'no-store' }); })
+      .then(function (r) {
+        if (!r || !r.ok) throw new Error('HTTP ' + (r && r.status));
         return r.arrayBuffer();
-      }).then(function (ab) {
+      })
+      .then(function (ab) { if (done) return; done = true; clearTimeout(timer); resolve(ab); })
+      .catch(function (e) { if (done) return; done = true; clearTimeout(timer); reject(e); });
+  });
+}
+
+/* \u5148\u7528\u6700\u5c0f\u7684\u90a3\u4e2a\u8d44\u4ea7\u63a2\u6d3b\uff0c\u627e\u5230\u7b2c\u4e00\u4e2a\u53ef\u7528\u955c\u50cf\uff0c\u518d\u7528\u5b83\u62c9\u5168\u90e8\u8d44\u4ea7 */
+function __resolveBase() {
+  var i = 0;
+  function attempt() {
+    if (i >= __ASSET_BASES.length) return Promise.reject(new Error('\u6240\u6709\u955c\u50cf\u5747\u4e0d\u53ef\u7528'));
+    var b = __ASSET_BASES[i++];
+    return __fetchOne(b + '/' + __ASSET_FILE.wbaes, 15000).then(function () {
+      __pushLog(['  \u955c\u50cf\u53ef\u7528 [' + i + '/' + __ASSET_BASES.length + '] ' + b]);
+      return b;
+    }).catch(function (e) {
+      __pushLog(['  \u955c\u50cf\u5931\u8d25 [' + i + '/' + __ASSET_BASES.length + '] ' + b + ' : ' + (e && e.message ? e.message : e)]);
+      return attempt();
+    });
+  }
+  return attempt();
+}
+
+function __preloadAssets() {
+  return __resolveBase().then(function (base) {
+    return Promise.all(Object.keys(__ASSET_FILE).map(function (k) {
+      return __fetchOne(base + '/' + __ASSET_FILE[k], 30000).then(function (ab) {
         var u8 = new Uint8Array(ab);
         var size0 = u8.length;
         u8 = __INFLATE.maybe(u8);
         __ASSETS[k] = (k === 'mpaas') ? __utf8Decode(u8) : u8;
         __pushLog(['  \u8d44\u4ea7 ' + k + ': ' + size0 + ' -> ' + u8.length + ' \u5b57\u8282']);
-      })
-    );
+      });
+    }));
   });
-  return Promise.all(pending);
 }
 
 function __asset(name) {
